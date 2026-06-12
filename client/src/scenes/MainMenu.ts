@@ -1,5 +1,5 @@
 import { COLORS, FACES } from '../ui/settings';
-import { MENU_GRAVITY, MENU_BALL_FRICTION, MENU_CURSOR_REPEL_STRENGTH, MENU_CURSOR_REPEL_RADIUS, MENU_CURSOR_REPEL_MAX, MENU_SHOCKWAVE_STRENGTH, MENU_SHOCKWAVE_RADIUS } from '@shared/constants';
+import { MENU_GRAVITY, MENU_BALL_FRICTION, MENU_CURSOR_REPEL_STRENGTH, MENU_CURSOR_REPEL_RADIUS, MENU_SHOCKWAVE_STRENGTH, MENU_SHOCKWAVE_RADIUS } from '@shared/constants';
 
 let rafId: number | null = null;
 
@@ -98,7 +98,7 @@ export function startMenuAnimation(canvas: HTMLCanvasElement): void {
         const dist = Math.hypot(dx, dy);
         if (dist > 0 && dist < MENU_CURSOR_REPEL_RADIUS) {
           const falloff = (1 - dist / MENU_CURSOR_REPEL_RADIUS) ** 2;
-          const push = Math.min(MENU_CURSOR_REPEL_STRENGTH / dist, MENU_CURSOR_REPEL_MAX) * falloff;
+          const push = MENU_CURSOR_REPEL_STRENGTH * falloff;
           b.vx += (dx / dist) * push;
           b.vy += (dy / dist) * push;
         }
