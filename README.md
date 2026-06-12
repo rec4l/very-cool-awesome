@@ -1,6 +1,6 @@
 # very cool awesome 🚀⚽
 
-**Live:** https://zero4-student-choice-very-cool-awesome.onrender.com/
+**Live:** https://very-cool-awesome.onrender.com/
 
 ## Project description
 
@@ -56,6 +56,3 @@ npm test          # single run
 npm run test:watch  # watch mode
 ```
 
-## Demo video
-
-🎥 [3–5 min walkthrough — pipeline running, eval results, code/prompt walkthrough](https://youtu.be/3v8slE4iB2E) (YouTube, unlisted)
