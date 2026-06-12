@@ -59,3 +59,17 @@ export const MAX_TELEPORT_CHARGES     = 3;
 // reconnect (#11) — how long a mid-match disconnect is given to recover via
 // Socket.IO connection state recovery before being treated as a real departure.
 export const RECONNECT_GRACE_MS = 30_000;
+
+// main menu background — bouncing balls fall under gravity and bounce off
+// the cursor, which pushes nearby balls away (capped so close-up balls don't
+// get flung), tune for feel.
+export const MENU_GRAVITY              = 0.02; // downward acceleration per frame
+export const MENU_BALL_FRICTION        = 0.02; // fraction of velocity lost per frame
+export const MENU_CURSOR_REPEL_STRENGTH = 20;    // numerator of the inverse-distance push
+export const MENU_CURSOR_REPEL_RADIUS   = 500;  // px — no effect beyond this distance
+export const MENU_CURSOR_REPEL_MAX      = 0.1;  // cap on push acceleration per frame
+
+// click shockwave — one-time radial impulse, strongest at the click point and
+// fading to nothing at the radius
+export const MENU_SHOCKWAVE_STRENGTH = 30;
+export const MENU_SHOCKWAVE_RADIUS   = 800;

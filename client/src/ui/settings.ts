@@ -17,7 +17,7 @@ export const COLORS = [
   { hex: '#fbcfe8', val: 0xfbcfe8 }, // pastel pink
   { hex: '#fda4af', val: 0xfda4af }, // pastel rose
 ];
-const FACES = ['happy', 'sad', 'bleh', 'dead', 'gasp', 'smile2', 'tongue', 'angry', 'kawaii', 'kiss', 'nose', 'xvx'];
+export const FACES = ['happy', 'sad', 'bleh', 'dead', 'gasp', 'smile2', 'tongue', 'angry', 'kawaii', 'kiss', 'nose', 'xvx'];
 
 export function loadPrefs(slotDefaultColor = 0xb5d5fb) {
   const savedColor = localStorage.getItem('vca_color');
