@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <title>very cool awesome</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      body {
+        background: #0d0d1a;
+        color: #fff;
+        font-family: monospace;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      /* animated menu background */
+      #menu-bg {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: none;
+        z-index: 0;
+      }
+
+      /* always-visible controls panel — corner-docked canvas */
+      #howto-strip {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        width: 260px;
+        height: 270px;
+        display: none;
+        z-index: 1;
+      }
+
+      /* screens sit on top of background */
+      .screen {
+        position: fixed;
+        inset: 0;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        z-index: 1;
+        overflow-y: auto;
+        padding: 20px 0;
+      }
+
+      /* game canvas is special — centered, not flex */
+      #game-canvas {
+        display: none;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        max-width: 100vw;
+        max-height: 100vh;
+        width: auto;
+        height: auto;
+        z-index: 2;
+      }
+
+      /* post-game floats above game canvas */
+      #screen-postgame { z-index: 3; }
+
+      /* ---- typography ---- */
+      .title {
+        font-size: 52px;
+        font-weight: bold;
+        letter-spacing: 6px;
+        margin-bottom: 16px;
+        text-shadow: 0 0 30px rgba(79, 195, 247, 0.4);
+      }
+
+      .logo-img {
+        height: 127px;
+        width: auto;
+        max-width: 90vw;
+        margin-bottom: 16px;
+        filter: drop-shadow(0 0 30px rgba(79, 195, 247, 0.4));
+      }
+
+      .label {
+        font-size: 12px;
+        letter-spacing: 3px;
+        color: #555;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+        text-align: center;
+      }
+
+      /* ---- column header art (non-interactive) ---- */
+      .column-header-art {
+        width: 100%;
+        max-width: 260px;
+        height: auto;
+        display: block;
+        margin-bottom: 4px;
+        pointer-events: none;
+      }
+
+      .status-text {
+        font-size: 13px;
+        color: #555;
+        margin: 4px 0;
+      }
+
+      .error-text {
+        font-size: 13px;
+        color: #ff7043;
+        min-height: 18px;
+        margin: 2px 0;
+      }
+
+      .winner-display {
+        font-size: 52px;
+        font-weight: bold;
+        letter-spacing: 4px;
+        margin-bottom: 8px;
+      }
+
+      .wins-label {
+        font-size: 18px;
+        color: #555;
+        letter-spacing: 2px;
+        margin-bottom: 32px;
+      }
+
+      /* ---- inputs ---- */
+      input {
+        background: #111122;
+        border: 1px solid #222;
+        color: #fff;
+        font-family: monospace;
+        font-size: 16px;
+        padding: 12px 16px;
+        width: 260px;
+        outline: none;
+      }
+      input::placeholder { color: #333; }
+      input:focus { border-color: #4fc3f7; }
+
+      /* ---- buttons ---- */
+      .btn {
+        background: transparent;
+        border: 1px solid #4fc3f7;
+        color: #4fc3f7;
+        font-family: monospace;
+        font-size: 14px;
+        font-weight: bold;
+        letter-spacing: 3px;
+        padding: 12px 0;
+        width: 260px;
+        cursor: pointer;
+        transition: background 0.1s, color 0.1s;
+      }
+      .btn:hover:not(:disabled) { background: #4fc3f7; color: #0d0d1a; }
+      .btn:active:not(:disabled) { background: #29b6f6; color: #0d0d1a; transform: scale(0.97); }
+      .btn:disabled { opacity: 0.4; cursor: default; }
+
+      .btn-ghost {
+        border-color: #2a2a3a;
+        color: #444;
+        font-size: 12px;
+        letter-spacing: 2px;
+      }
+      .btn-ghost:hover { background: #1a1a2e; color: #888; border-color: #444; }
+      .btn-ghost:active:not(:disabled) { background: #111120; color: #aaa; transform: scale(0.97); }
+
+      .btn-small {
+        width: auto;
+        padding: 8px 18px;
+        font-size: 11px;
+      }
+
+      /* drawn button art pipeline */
+      .btn.btn-drawn,
+      .btn.btn-drawn:hover:not(:disabled),
+      .btn.btn-drawn:active:not(:disabled) {
+        background-color: transparent;
+        background-image: var(--btn-art);
+        background-size: 100% 100%;
+        background-repeat: no-repeat;
+        background-position: center;
+        border: none;
+        color: transparent;
+      }
+      .btn.btn-drawn:hover:not(:disabled)   { filter: brightness(1.25); }
+      .btn.btn-drawn:active:not(:disabled)  { filter: brightness(0.8); transform: scale(0.97); }
+      .btn.btn-drawn:disabled               { filter: grayscale(0.6) brightness(0.7); }
+
+      /* ---- screen fade overlay ---- */
+      #fade-overlay {
+        position: fixed;
+        inset: 0;
+        background: #0d0d1a;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 100ms ease;
+        z-index: 99;
+      }
+
+      /* ---- own-connection-lost banner (#11) ---- */
+      #reconnect-banner {
+        position: fixed;
+        top: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(13, 13, 26, 0.9);
+        border: 1px solid #ff7043;
+        color: #ff7043;
+        font-family: monospace;
+        font-size: 12px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        padding: 10px 20px;
+        border-radius: 6px;
+        display: none;
+        z-index: 100;
+        pointer-events: none;
+      }
+
+      /* ---- map picker ---- */
+      .map-picker { display: flex; gap: 8px; margin-bottom: 8px; }
+      .map-btn {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        padding: 8px 6px;
+        border: 1px solid #334;
+        border-radius: 6px;
+        background: transparent;
+        font-family: monospace;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .map-btn:hover { border-color: #667; }
+      .map-btn.active { border-color: #7c83ff; background: rgba(124,131,255,0.1); }
+      .map-name { font-size: 11px; font-weight: bold; color: #aaa; }
+      .map-btn:hover  .map-name { color: #fff; }
+      .map-btn.active .map-name { color: #7c83ff; }
+      .map-vibe { font-size: 10px; color: #445; }
+      .map-btn.active .map-vibe { color: #7c83ff; opacity: 0.7; }
+      .map-dims { font-size: 9px; color: #333; }
+      .map-picker-label { font-family: monospace; font-size: 10px; color: #445; margin-bottom: 6px; letter-spacing: 2px; text-transform: uppercase; }
+
+      .mode-picker { display: flex; gap: 8px; margin-bottom: 8px; }
+      .mode-btn {
+        flex: 1;
+        padding: 8px 6px;
+        border: 1px solid #334;
+        border-radius: 6px;
+        background: transparent;
+        color: #aaa;
+        font-family: monospace;
+        font-size: 11px;
+        font-weight: bold;
+        letter-spacing: 1px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .mode-btn:hover:not(:disabled) { border-color: #667; color: #fff; }
+      .mode-btn:disabled { opacity: 0.4; cursor: default; }
+      .mode-btn.active { border-color: #ff7aa2; background: rgba(255, 122, 162, 0.1); color: #ffb3ca; }
+      .mode-btn.btn-drawn,
+      .mode-btn.btn-drawn:hover,
+      .mode-btn.btn-drawn.active,
+      .mode-btn.btn-drawn:active:not(:disabled) {
+        background-color: transparent;
+        background-image: var(--btn-art);
+        background-size: 100% 100%;
+        background-repeat: no-repeat;
+        background-position: center;
+        border: none;
+        color: transparent;
+      }
+      .mode-btn.btn-drawn:hover   { filter: brightness(1.25); }
+      .mode-btn.btn-drawn:active:not(:disabled) { filter: brightness(0.8); transform: scale(0.97); }
+      .mode-btn.btn-drawn:disabled { filter: grayscale(0.6) brightness(0.7); cursor: default; }
+
+      /* ---- lobby player cards (side by side) ---- */
+      .lobby-players-row,
+      .team-lobby {
+        display: flex;
+        gap: 10px;
+        width: 100%;
+      }
+
+      .team-column {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      #team-a-slots, #team-b-slots {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .team-label {
+        font-size: 10px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        text-align: center;
+      }
+
+      .team-label-a { color: #7ec8ff; }
+      .team-label-b { color: #ff8fa3; }
+
+      .lobby-player-card {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 12px 8px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid #1a1a2e;
+        border-radius: 6px;
+        min-height: 112px;
+      }
+
+      .lobby-player-ball {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        overflow: hidden;
+        background: #1a1a2e;
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.05);
+        transition: box-shadow 0.2s;
+        flex-shrink: 0;
+      }
+      .lobby-player-ball img {
+        width: 100%;
+        height: 100%;
+        image-rendering: pixelated;
+        display: none; /* shown by JS once a player is present */
+      }
+
+      .lobby-player-name {
+        font-size: 12px;
+        font-weight: bold;
+        color: #fff;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-align: center;
+        letter-spacing: 1px;
+      }
+
+      .lobby-player-status {
+        font-size: 10px;
+        letter-spacing: 2px;
+        color: transparent; /* hidden until ready */
+        text-transform: uppercase;
+        min-height: 13px;
+      }
+      .lobby-player-status.ready     { color: #66bb6a; }
+      .lobby-player-status.not-ready { color: #ff7043; }
+
+      /* ---- divider ---- */
+      .divider {
+        width: 260px;
+        border: none;
+        border-top: 1px solid #1a1a2e;
+        margin: 8px 0;
+      }
+
+      /* ====================================================
+         HOME SCREEN 3-COLUMN LAYOUT
+         ==================================================== */
+
+      /* home screen pins content to top so the lobby column growing doesn't shift the logo */
+      #screen-home {
+        justify-content: flex-start;
+        padding-top: 48px;
+      }
+
+      .home-layout {
+        display: flex;
+        gap: 32px;
+        align-items: flex-start;
+        justify-content: center;
+      }
+
+      /* shared card frame for all 3 columns */
+      .home-col {
+        background: rgba(8, 8, 18, 0.75);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 8px;
+        padding: 20px;
+      }
+
+      /* ---- left column: identity / appearance ---- */
+      #home-left {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        width: 294px;
+        transition: opacity 0.3s;
+      }
+
+      /* fades when a room is active — appearance is locked in */
+      #home-left.faded {
+        opacity: 0.15;
+        pointer-events: none;
+      }
+
+      #preview-ball {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: #b5d5fb;
+        box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.75);
+        overflow: hidden;
+        flex-shrink: 0;
+        margin-bottom: 4px;
+      }
+      #preview-ball img {
+        width: 100%;
+        height: 100%;
+        image-rendering: pixelated;
+        display: block;
+      }
+
+      .color-palette { display: grid; grid-template-columns: repeat(6, 32px); gap: 8px; margin-top: 4px; }
+      .color-swatch { width: 32px; height: 32px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s, transform 0.1s; flex-shrink: 0; }
+      .color-swatch:hover { transform: scale(1.1); }
+      .color-swatch.selected { border-color: #fff; }
+      .face-picker { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+      .face-opt { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; }
+      .face-ball { width: 32px; height: 32px; border-radius: 50%; position: relative; overflow: hidden; border: 2px solid transparent; transition: border-color 0.15s; }
+      .face-ball img { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+      .face-opt.selected .face-ball { border-color: #fff; }
+
+      /* ---- middle column: actions ---- */
+      #home-right {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: center;
+        gap: 10px;
+        width: 330px;
+      }
+
+      #home-right input,
+      #home-right .btn { width: 100%; }
+
+      /* join section flex wrapper (no fade — whole column fades instead) */
+      #home-join-section {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      /* middle column fades when a room is active */
+      #home-right { transition: opacity 0.3s; }
+      #home-right.faded { opacity: 0.15; pointer-events: none; }
+
+      /* "or" separator between host and join */
+      .home-or {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: #333;
+        font-size: 11px;
+        letter-spacing: 2px;
+        margin: 2px 0;
+      }
+      .home-or::before,
+      .home-or::after {
+        content: '';
+        flex: 1;
+        border-top: 1px solid #1e1e30;
+      }
+
+      /* code field in the join section */
+      .home-code-input {
+        letter-spacing: 10px;
+        font-size: 20px;
+        text-align: center;
+        text-indent: 10px;
+        color: #4fc3f7;
+      }
+      .home-code-input:focus {
+        text-shadow: 0 0 20px rgba(79, 195, 247, 0.3);
+      }
+
+      /* ---- right column: lobby ---- */
+      #home-lobby-col {
+        display: flex;
+        flex-direction: column;
+        width: 294px;
+      }
+
+      /* placeholder shown before joining any room */
+      .lobby-placeholder {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+      .lobby-placeholder p {
+        font-size: 13px;
+        color: #2a2a3a;
+        line-height: 1.8;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+
+      /* full lobby UI — hidden until a room is active */
+      .lobby-content {
+        display: none;
+        flex-direction: column;
+        gap: 8px;
+        flex: 1;
+      }
+
+      #home-lobby-col.lobby-active .lobby-placeholder { display: none; }
+      #home-lobby-col.lobby-active .lobby-content     { display: flex; }
+
+      /* room code inside the lobby column */
+      .lobby-code-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 2px;
+      }
+      #display-code {
+        font-size: 32px;
+        font-weight: bold;
+        letter-spacing: 8px;
+        color: #4fc3f7;
+        text-indent: 4px;
+        text-shadow: 0 0 20px rgba(79, 195, 247, 0.35);
+      }
+
+      /* buttons and inputs inside the lobby column fill its width */
+      #home-lobby-col .btn    { width: 100%; }
+      #home-lobby-col input   { width: 100%; }
+      #home-lobby-col .divider { width: 100%; }
+
+      /* waiting-for-player text style */
+      .lobby-waiting {
+        color: #333;
+        font-style: italic;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- screen transition fade -->
+    <div id="fade-overlay"></div>
+
+    <!-- own connection drop notice (#11) -->
+    <div id="reconnect-banner">connection lost — reconnecting…</div>
+
+    <!-- background animation (home screen only) -->
+    <canvas id="menu-bg"></canvas>
+    <canvas id="howto-strip"></canvas>
+
+    <!-- home screen: all 3 columns -->
+    <div id="screen-home" class="screen">
+      <img id="title-logo" class="logo-img" src="/assets/ui/logo.png" alt="very cool awesome"
+           onerror="this.replaceWith(Object.assign(document.createElement('h1'), { className: 'title', textContent: 'very cool awesome' }));" />
+
+      <div class="home-layout">
+
+        <!-- column 1: who you are -->
+        <div id="home-left" class="home-col">
+          <img src="/assets/ui/buttons/btn-go-settings.png" alt="" class="column-header-art" />
+          <div id="preview-ball">
+            <img id="preview-face" src="/assets/sprites/faces/happy.png" alt="" />
+          </div>
+          <p class="label">color</p>
+          <div class="color-palette" id="color-palette"></div>
+          <p class="label" style="margin-top: 8px;">face</p>
+          <div class="face-picker" id="face-picker"></div>
+        </div>
+
+        <!-- column 2: what you want to do -->
+        <div id="home-right" class="home-col">
+          <input id="name-input" placeholder="what's your name :D" maxlength="20" autocomplete="off" />
+          <button class="btn" id="btn-create" disabled style="margin-top: 6px;">create</button>
+          <div id="home-join-section">
+            <div class="home-or">or</div>
+            <p class="label">join room</p>
+            <input id="code-input" class="home-code-input" placeholder="CODE" maxlength="4" autocomplete="off" />
+            <button class="btn" id="btn-join-submit" disabled>join</button>
+            <p class="error-text" id="join-error"></p>
+          </div>
+        </div>
+
+        <!-- column 3: lobby (placeholder until in a room) -->
+        <div id="home-lobby-col" class="home-col">
+
+          <div class="lobby-placeholder">
+            <p>create or join<br>a lobby!</p>
+          </div>
+
+          <div class="lobby-content">
+            <p class="label">room code</p>
+            <div class="lobby-code-row">
+              <span id="display-code">----</span>
+              <button class="btn btn-ghost btn-small" id="btn-copy-link">copy link</button>
+            </div>
+
+            <hr class="divider" />
+
+            <div id="mode-picker-section" style="display:none;">
+              <p class="map-picker-label">mode</p>
+              <div class="mode-picker">
+                <button class="mode-btn active" id="btn-mode-1v1" data-mode="classic-1v1">1v1</button>
+                <button class="mode-btn" id="btn-mode-2v2" data-mode="team-2v2">2v2</button>
+              </div>
+            </div>
+
+            <div class="team-lobby">
+              <div class="team-column">
+                <p class="team-label team-label-a">team a</p>
+                <div id="team-a-slots"></div>
+              </div>
+              <div class="team-column">
+                <p class="team-label team-label-b">team b</p>
+                <div id="team-b-slots"></div>
+              </div>
+            </div>
+
+            <div id="lobby-card-pool" style="display:none;">
+              <div class="lobby-player-card" id="lobby-card-1">
+                <div class="lobby-player-ball" id="lobby-ball-1">
+                  <img id="lobby-face-1" src="" alt="" />
+                </div>
+                <span class="lobby-player-name" id="lobby-name-1">—</span>
+                <span class="lobby-player-status" id="lobby-status-1"></span>
+              </div>
+              <div class="lobby-player-card" id="lobby-card-2">
+                <div class="lobby-player-ball" id="lobby-ball-2">
+                  <img id="lobby-face-2" src="" alt="" />
+                </div>
+                <span class="lobby-player-name" id="lobby-name-2">waiting...</span>
+                <span class="lobby-player-status" id="lobby-status-2"></span>
+              </div>
+              <div class="lobby-player-card" id="lobby-card-3">
+                <div class="lobby-player-ball" id="lobby-ball-3">
+                  <img id="lobby-face-3" src="" alt="" />
+                </div>
+                <span class="lobby-player-name" id="lobby-name-3">waiting...</span>
+                <span class="lobby-player-status" id="lobby-status-3"></span>
+              </div>
+              <div class="lobby-player-card" id="lobby-card-4">
+                <div class="lobby-player-ball" id="lobby-ball-4">
+                  <img id="lobby-face-4" src="" alt="" />
+                </div>
+                <span class="lobby-player-name" id="lobby-name-4">waiting...</span>
+                <span class="lobby-player-status" id="lobby-status-4"></span>
+              </div>
+            </div>
+
+            <div id="map-picker-section" style="display:none;">
+              <p class="map-picker-label">map</p>
+              <div class="map-picker">
+                <button class="map-btn active" data-map="classic">
+                  <span class="map-name">classic</span>
+                  <span class="map-vibe">tight</span>
+                  <span class="map-dims">1200×600</span>
+                </button>
+                <button class="map-btn" data-map="large">
+                  <span class="map-name">large</span>
+                  <span class="map-vibe">roomy</span>
+                  <span class="map-dims">1600×800</span>
+                </button>
+                <button class="map-btn" data-map="xl">
+                  <span class="map-name">xl</span>
+                  <span class="map-vibe">chaos</span>
+                  <span class="map-dims">2000×1000</span>
+                </button>
+              </div>
+            </div>
+
+            <button class="btn" id="btn-ready">ready</button>
+            <button class="btn btn-ghost btn-small" id="btn-swap-team">swap team</button>
+            <hr class="divider" />
+            <button class="btn btn-ghost btn-small" id="btn-leave-room">leave room</button>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+
+    <!-- game canvas (PixiJS takes this over) -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- post-game -->
+    <div id="screen-postgame" class="screen">
+      <p class="winner-display" id="winner-display">—</p>
+      <p class="wins-label">wins</p>
+      <button class="btn" id="btn-rematch">rematch</button>
+      <button class="btn btn-ghost" id="btn-leave" style="margin-top: 6px;">leave</button>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

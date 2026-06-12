@@ -1,0 +1,1815 @@
+The canvas renders at 60fps via requestAnimationFrame, but since the server only sends state 30 times per second, positions snap to a new value 30 times per second — which is exactly the choppiness you're seeing.
+
+Two options:
+
+Raise the tick rate to 60 — simple one-line change, doubles server broadcast frequency. Works, but doesn't scale and doesn't teach you anything interesting.
+Client-side interpolation — client keeps the last two received states and smoothly interpolates between them on every render frame. Movement becomes perfectly fluid even at 30 ticks/s. This is how real multiplayer games handle it (the client always renders slightly in the past, ~33ms, but you'd never notice).
+Option 2 is the right call — it's a genuinely interesting technique, fits the "difficult thing with AI" brief, and keeps server load low. The only tradeoff is a small fixed lag of one tick interval (~33ms), which is imperceptible.
+
+Want to go with interpolation?
+
+probably 2
+
+Good call. This only changes game.js — the renderer stays the same since it receives the same state shape.
+
+The idea: instead of storing the latest state and snapping to it, we keep the previous and current snapshots with timestamps. Each render frame we calculate how far we are between those two states time-wise and lerp the positions.
+
+
+Created a file, ran 2 commands
+Updated
+game.js
++59
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\game.js
+let playerNumber = null;
+let activeMap    = null;
+let ctx          = null;
+let socket       = null;
+
+let prevSnapshot = null;  // { state, time }
+let currSnapshot = null;  // { state, time }
+
+const TICK_MS = 1000 / CONSTANTS.TICK_RATE;
+
+socket = initNetwork(
+  (num, map) => {
+    playerNumber = num;
+    activeMap = map;
+    ctx = initRenderer(map);
+
+    const color = num === 1 ? 'blue' : 'orange';
+    document.getElementById('status').textContent =
+      `You are Player ${num} (${color}). Waiting for opponent...`;
+  },
+  (state) => {
+    prevSnapshot = currSnapshot;
+    currSnapshot = { state, time: performance.now() };
+
+    document.getElementById('status').textContent =
+      `Player ${playerNumber} — use WASD or arrow keys`;
+  }
+);
+
+setInterval(() => {
+  if (socket && playerNumber) socket.emit('input', getInput());
+}, TICK_MS);
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function getInterpolatedState() {
+  if (!currSnapshot) return null;
+  if (!prevSnapshot) return currSnapshot.state;
+
+  // how far are we between the two snapshots (0 = at prev, 1 = at curr)
+  const t = Math.min(1, (performance.now() - currSnapshot.time) / TICK_MS);
+  const a = prevSnapshot.state;
+  const b = currSnapshot.state;
+
+  return {
+    p1:   { x: lerp(a.p1.x,   b.p1.x,   t), y: lerp(a.p1.y,   b.p1.y,   t) },
+    p2:   { x: lerp(a.p2.x,   b.p2.x,   t), y: lerp(a.p2.y,   b.p2.y,   t) },
+    ball: { x: lerp(a.ball.x, b.ball.x, t), y: lerp(a.ball.y, b.ball.y, t) },
+  };
+}
+
+function gameLoop() {
+  if (ctx && activeMap) render(ctx, getInterpolatedState(), activeMap);
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+Ran
+Restart server
+Bash
+taskkill //F //IM node.exe 2>&1 && sleep 1 && cd "C:/Users/Rissa's/Documents/cse 190 assignment 4" && node server/index.js &
+Command running in background with ID: bnrwliu22. Output is being written to: C:\Users\Rissa's\AppData\Local\Temp\claude\C--Users-Rissa-s-Documents-cse-190-assignment-4\2a39e4fe-2fb2-4a54-a52f-32d5bafe938f\tasks\bnrwliu22.output. You will be notified when it completes. To check interim output, use Read on that file path.
+Ran
+Verify server is up
+Bash
+sleep 2 && curl -s http://localhost:3000 > /dev/null && echo "server ok"
+server ok
+Server is up. Refresh both tabs and movement should be visibly smoother — the canvas now renders at your monitor's full refresh rate with positions calculated between server ticks rather than snapping every 33ms.
+
+looks good can we handle more of the game state
+
+The natural next chunk of game state to add is goals + scoring + reset. Here's the plan before we touch anything:
+
+What changes:
+
+Map format gets a goals array — each goal defines where the gap is in a wall and which player scores. The classic map's left/right walls get split into top and bottom sections to create the opening.
+Server detects when the ball crosses into a goal zone each tick, increments the score, then resets all positions after a short delay (1 second).
+Server broadcasts a score event alongside state so clients always know the current score.
+Renderer draws the score at the top of the canvas and draws the goal openings visually.
+A couple of decisions:
+
+Goal size — how tall should the goal opening be? Classic Rocket League goals are roughly 1/3 of the wall height. On our 600px arena that'd be ~200px. Sound right?
+Win condition — first to how many goals? Or no win condition yet, just track score?
+What do you think?
+
+200px sounds good
+win condition sounds like 5  goals maybe
+
+Let me lay out the full plan since this touches several files:
+
+Map: Left/right walls get split into top and bottom sections (creating the 200px goal gap at center). Back walls added behind each goal to catch the ball during the reset pause.
+
+Server: After each physics tick, check if the ball has crossed the goal line through the gap. If yes: pause the tick loop, increment score, emit a goal event (with winner flag if score hits 5), wait 1 second, reset positions, resume.
+
+Client: Score is included in every state broadcast. Renderer draws the score at the top and a winner overlay when the game ends.
+
+Writing it all now:
+
+
+Created 7 files, edited a file, ran 2 commands
+Updated
+classic.js
++41
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\shared\maps\classic.js
+const W = 1200;
+const H = 600;
+const T = 20;
+const GOAL_HEIGHT = 200;
+const GOAL_TOP    = (H - GOAL_HEIGHT) / 2;  // 200
+const GOAL_BOTTOM = GOAL_TOP + GOAL_HEIGHT;  // 400
+
+const classicMap = {
+  id: 'classic',
+  name: 'Classic Arena',
+  width: W,
+  height: H,
+  playerStarts: [
+    { x: 200, y: H / 2 },
+    { x: 1000, y: H / 2 },
+  ],
+  ballStart: { x: W / 2, y: H / 2 },
+  walls: [
+    // top and bottom
+    { x: W / 2,    y: -T / 2,   w: W,  h: T },
+    { x: W / 2,    y: H + T/2,  w: W,  h: T },
+
+    // left wall — split for goal gap
+    { x: -T / 2,   y: GOAL_TOP / 2,             w: T, h: GOAL_TOP },
+    { x: -T / 2,   y: GOAL_BOTTOM + (H - GOAL_BOTTOM) / 2, w: T, h: H - GOAL_BOTTOM },
+
+    // right wall — split for goal gap
+    { x: W + T/2,  y: GOAL_TOP / 2,             w: T, h: GOAL_TOP },
+    { x: W + T/2,  y: GOAL_BOTTOM + (H - GOAL_BOTTOM) / 2, w: T, h: H - GOAL_BOTTOM },
+
+    // back walls — catch ball after a goal during reset pause
+    { x: -60,      y: H / 2,    w: T,  h: H },
+    { x: W + 60,   y: H / 2,    w: T,  h: H },
+  ],
+  goals: [
+    { side: 'left',  yMin: GOAL_TOP, yMax: GOAL_BOTTOM, scoringPlayer: 2 },
+    { side: 'right', yMin: GOAL_TOP, yMax: GOAL_BOTTOM, scoringPlayer: 1 },
+  ],
+};
+
+if (typeof module !== 'undefined') module.exports = classicMap;
+Edited
+constants.js
++1
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\shared\constants.js
+  TICK_RATE: 30,
+  WIN_SCORE: 5,
+};
+Updated
+physics.js
++67
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\physics.js
+const Matter = require('matter-js');
+const C = require('../shared/constants');
+
+const { Engine, Bodies, Body, World } = Matter;
+
+function createPhysics(map) {
+  const engine = Engine.create({ gravity: { x: 0, y: 0 } });
+  const world = engine.world;
+
+  const wallOpts = { isStatic: true, restitution: 0.5, friction: 0 };
+  const wallBodies = map.walls.map(w =>
+    Bodies.rectangle(w.x, w.y, w.w, w.h, wallOpts)
+  );
+  World.add(world, wallBodies);
+
+  const playerOpts = { restitution: 0.5, friction: 0, frictionAir: 0.1, label: 'player' };
+  const player1 = Bodies.circle(map.playerStarts[0].x, map.playerStarts[0].y, C.PLAYER_RADIUS, playerOpts);
+  const player2 = Bodies.circle(map.playerStarts[1].x, map.playerStarts[1].y, C.PLAYER_RADIUS, playerOpts);
+
+  const ballOpts = { restitution: 0.8, friction: C.BALL_FRICTION, frictionAir: 0.005, label: 'ball' };
+  const ball = Bodies.circle(map.ballStart.x, map.ballStart.y, C.BALL_RADIUS, ballOpts);
+
+  World.add(world, [player1, player2, ball]);
+
+  return { engine, player1, player2, ball };
+}
+
+function applyInputs(body, input) {
+  const force = C.PLAYER_SPEED;
+  if (input.up)    Body.applyForce(body, body.position, { x: 0,      y: -force });
+  if (input.down)  Body.applyForce(body, body.position, { x: 0,      y:  force });
+  if (input.left)  Body.applyForce(body, body.position, { x: -force, y: 0 });
+  if (input.right) Body.applyForce(body, body.position, { x:  force, y: 0 });
+}
+
+function stepWorld(engine, delta) {
+  Engine.update(engine, delta);
+}
+
+function checkGoal(ball, map) {
+  for (const goal of map.goals) {
+    const inYRange = ball.position.y > goal.yMin && ball.position.y < goal.yMax;
+    if (!inYRange) continue;
+    if (goal.side === 'left'  && ball.position.x < 0)          return goal.scoringPlayer;
+    if (goal.side === 'right' && ball.position.x > map.width)   return goal.scoringPlayer;
+  }
+  return null;
+}
+
+function resetPositions(map, player1, player2, ball) {
+  Body.setPosition(player1, map.playerStarts[0]);
+  Body.setPosition(player2, map.playerStarts[1]);
+  Body.setPosition(ball, map.ballStart);
+  Body.setVelocity(player1, { x: 0, y: 0 });
+  Body.setVelocity(player2, { x: 0, y: 0 });
+  Body.setVelocity(ball,    { x: 0, y: 0 });
+}
+
+function getState(player1, player2, ball) {
+  return {
+    p1:   { x: player1.position.x, y: player1.position.y },
+    p2:   { x: player2.position.x, y: player2.position.y },
+    ball: { x: ball.position.x,    y: ball.position.y },
+  };
+}
+
+module.exports = { createPhysics, applyInputs, stepWorld, checkGoal, resetPositions, getState };
+Updated
+gameLoop.js
++47
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\gameLoop.js
+const C = require('../shared/constants');
+const { createPhysics, applyInputs, stepWorld, checkGoal, resetPositions, getState } = require('./physics');
+
+const TICK_MS = 1000 / C.TICK_RATE;
+
+function startGameLoop(io, session, map) {
+  const { engine, player1, player2, ball } = createPhysics(map);
+  session.physics = { engine, player1, player2, ball };
+
+  session.interval = setInterval(() => {
+    if (session.scoring) return;
+
+    applyInputs(player1, session.inputs[1] || {});
+    applyInputs(player2, session.inputs[2] || {});
+    stepWorld(engine, TICK_MS);
+
+    const scorer = checkGoal(ball, map);
+    if (scorer) {
+      session.scoring = true;
+      session.score[scorer]++;
+
+      const winner = session.score[scorer] >= C.WIN_SCORE ? scorer : null;
+      io.to(session.roomId).emit('goal', { scorer, score: { ...session.score }, winner });
+
+      if (winner) {
+        stopGameLoop(session);
+        return;
+      }
+
+      setTimeout(() => {
+        resetPositions(map, player1, player2, ball);
+        session.scoring = false;
+      }, 1000);
+      return;
+    }
+
+    const state = getState(player1, player2, ball);
+    io.to(session.roomId).emit('state', { ...state, score: session.score });
+  }, TICK_MS);
+}
+
+function stopGameLoop(session) {
+  clearInterval(session.interval);
+  session.interval = null;
+}
+
+module.exports = { startGameLoop, stopGameLoop };
+Updated
+index.js
++66
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\index.js
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
+const { startGameLoop, stopGameLoop } = require('./gameLoop');
+const maps = require('../shared/maps');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+app.use('/shared', express.static(path.join(__dirname, '../shared')));
+app.use(express.static(path.join(__dirname, '../client')));
+
+const activeMap = maps['classic'];
+
+const session = {
+  roomId: 'main',
+  players: {},
+  inputs:  { 1: {}, 2: {} },
+  score:   { 1: 0, 2: 0 },
+  scoring: false,
+  physics: null,
+  interval: null,
+};
+
+io.on('connection', (socket) => {
+  const taken = Object.values(session.players);
+  if (taken.length >= 2) {
+    socket.emit('full');
+    socket.disconnect();
+    return;
+  }
+
+  const playerNumber = taken.includes(1) ? 2 : 1;
+  session.players[socket.id] = playerNumber;
+  socket.join(session.roomId);
+
+  socket.emit('assigned', { playerNumber, map: activeMap });
+  console.log(`Player ${playerNumber} connected (${socket.id})`);
+
+  if (Object.keys(session.players).length === 2 && !session.interval) {
+    console.log('Both players connected — starting game loop');
+    startGameLoop(io, session, activeMap);
+  }
+
+  socket.on('input', (input) => {
+    session.inputs[playerNumber] = input;
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`Player ${playerNumber} disconnected`);
+    delete session.players[socket.id];
+    session.inputs[playerNumber] = {};
+
+    if (Object.keys(session.players).length < 2) {
+      stopGameLoop(session);
+      session.scoring = false;
+    }
+  });
+});
+
+const PORT = 3000;
+server.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
+});
+Updated
+network.js
++21
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\network.js
+function initNetwork(onAssigned, onState, onGoal) {
+  const socket = io();
+
+  socket.on('assigned', ({ playerNumber, map }) => {
+    onAssigned(playerNumber, map);
+  });
+
+  socket.on('state', (state) => {
+    onState(state);
+  });
+
+  socket.on('goal', ({ scorer, score, winner }) => {
+    onGoal(scorer, score, winner);
+  });
+
+  socket.on('full', () => {
+    document.getElementById('status').textContent = 'Game is full. Try again later.';
+  });
+
+  return socket;
+}
+Updated
+game.js
++74
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\game.js
+let playerNumber = null;
+let activeMap    = null;
+let ctx          = null;
+let socket       = null;
+
+let prevSnapshot = null;
+let currSnapshot = null;
+let latestScore  = { 1: 0, 2: 0 };
+let winner       = null;
+
+const TICK_MS = 1000 / CONSTANTS.TICK_RATE;
+
+socket = initNetwork(
+  (num, map) => {
+    playerNumber = num;
+    activeMap = map;
+    ctx = initRenderer(map);
+
+    const color = num === 1 ? 'blue' : 'orange';
+    document.getElementById('status').textContent =
+      `You are Player ${num} (${color}). Waiting for opponent...`;
+  },
+  (state) => {
+    const { score, ...gameState } = state;
+    if (score) latestScore = score;
+
+    prevSnapshot = currSnapshot;
+    currSnapshot = { state: gameState, time: performance.now() };
+
+    document.getElementById('status').textContent =
+      `Player ${playerNumber} — use WASD or arrow keys`;
+  },
+  (scorer, score, w) => {
+    latestScore = score;
+    if (w) {
+      winner = w;
+      document.getElementById('status').textContent =
+        `Player ${w} wins!`;
+    } else {
+      document.getElementById('status').textContent =
+        `Player ${scorer} scored!`;
+    }
+  }
+);
+
+setInterval(() => {
+  if (socket && playerNumber) socket.emit('input', getInput());
+}, TICK_MS);
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function getInterpolatedState() {
+  if (!currSnapshot) return null;
+  if (!prevSnapshot) return currSnapshot.state;
+
+  const t = Math.min(1, (performance.now() - currSnapshot.time) / TICK_MS);
+  const a = prevSnapshot.state;
+  const b = currSnapshot.state;
+
+  return {
+    p1:   { x: lerp(a.p1.x,   b.p1.x,   t), y: lerp(a.p1.y,   b.p1.y,   t) },
+    p2:   { x: lerp(a.p2.x,   b.p2.x,   t), y: lerp(a.p2.y,   b.p2.y,   t) },
+    ball: { x: lerp(a.ball.x, b.ball.x, t), y: lerp(a.ball.y, b.ball.y, t) },
+  };
+}
+
+function gameLoop() {
+  if (ctx && activeMap) render(ctx, getInterpolatedState(), activeMap, latestScore, winner);
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+Updated
+renderer.js
++91
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\renderer.js
+function initRenderer(map) {
+  const canvas = document.getElementById('gameCanvas');
+  canvas.width  = map.width;
+  canvas.height = map.height;
+  return canvas.getContext('2d');
+}
+
+function render(ctx, state, map, score, winner) {
+  const W = map.width;
+  const H = map.height;
+
+  // background
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, W, H);
+
+  // center line
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([10, 10]);
+  ctx.beginPath();
+  ctx.moveTo(W / 2, 0);
+  ctx.lineTo(W / 2, H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // goal openings
+  for (const goal of map.goals) {
+    const x = goal.side === 'left' ? 0 : W;
+    ctx.strokeStyle = goal.side === 'left' ? '#ff8c42' : '#4a9eff';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(x, goal.yMin);
+    ctx.lineTo(x, goal.yMax);
+    ctx.stroke();
+  }
+
+  // walls
+  ctx.fillStyle = '#555';
+  map.walls.forEach(w => {
+    ctx.fillRect(w.x - w.w / 2, w.y - w.h / 2, w.w, w.h);
+  });
+
+  // score
+  if (score) {
+    ctx.font = 'bold 36px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+
+    ctx.fillStyle = '#4a9eff';
+    ctx.fillText(score[1], W / 2 - 50, 12);
+
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('-', W / 2, 12);
+
+    ctx.fillStyle = '#ff8c42';
+    ctx.fillText(score[2], W / 2 + 50, 12);
+  }
+
+  if (!state) return;
+
+  // player 1 (blue)
+  ctx.fillStyle = '#4a9eff';
+  ctx.beginPath();
+  ctx.arc(state.p1.x, state.p1.y, CONSTANTS.PLAYER_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+
+  // player 2 (orange)
+  ctx.fillStyle = '#ff8c42';
+  ctx.beginPath();
+  ctx.arc(state.p2.x, state.p2.y, CONSTANTS.PLAYER_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ball
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(state.ball.x, state.ball.y, CONSTANTS.BALL_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+
+  // winner overlay
+  if (winner) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(0, 0, W, H);
+
+    const color = winner === 1 ? '#4a9eff' : '#ff8c42';
+    ctx.fillStyle = color;
+    ctx.font = 'bold 72px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`Player ${winner} Wins!`, W / 2, H / 2);
+  }
+}
+Ran
+Restart server with scoring changes
+Bash
+taskkill //F //IM node.exe 2>&1 && sleep 1 && cd "C:/Users/Rissa's/Documents/cse 190 assignment 4" && node server/index.js &
+Command running in background with ID: bkaj463yd. Output is being written to: C:\Users\Rissa's\AppData\Local\Temp\claude\C--Users-Rissa-s-Documents-cse-190-assignment-4\2a39e4fe-2fb2-4a54-a52f-32d5bafe938f\tasks\bkaj463yd.output. You will be notified when it completes. To check interim output, use Read on that file path.
+Ran
+Verify server is running
+Bash
+sleep 2 && curl -s http://localhost:3000 > /dev/null && echo "server ok"
+server ok
+Server is up. Refresh both tabs and you should see:
+
+Goal openings in the left/right walls (orange on the left side, blue on the right)
+Score displayed at the top center in player colors
+Status bar shows "Player X scored!" on a goal
+"Player X Wins!" overlay when someone hits 5
+One thing to note: the goal color convention is intentionally flipped — the left opening is orange-bordered (Player 2's goal) and the right is blue-bordered (Player 1's goal), so each player can see which net they're defending.
+
+sure looks good
+
+Good. Before coding, here's the plan for both:
+
+Boost:
+
+Shift key activates boost — extra force multiplier applied server-side
+Boost meter (0–100) drains while boosting, slowly regens when not
+Meter is sent with every state broadcast so clients can render it
+HUD bars drawn at the bottom corners — blue for P1, orange for P2
+Countdown:
+
+Replaces the raw 1-second delay after goals, and added before the initial kickoff
+Server emits countdown events: 3 → 2 → 1 → GO! (1s each, GO! shows 0.5s)
+Client renders the number as a centered overlay on canvas
+Physics tick is paused during countdown (same session.scoring flag already in place)
+Two decisions baked in that you can redirect: boost multiplier is 2.5x (enough to feel impactful but not broken), and boost lasts ~2 seconds continuous before emptying. Let me know if you want to tune those after testing.
+
+Writing it all now:
+
+
+Read a file, edited 3 files, created 5 files, ran 2 commands
+Read
+constants.js
+C:\Users\Rissa's\Documents\cse 190 assignment 4\shared\constants.js
+const CONSTANTS = {
+  PLAYER_RADIUS: 25,
+  BALL_RADIUS: 20,
+
+  PLAYER_SPEED: 0.008,
+  BALL_FRICTION: 0.01,
+
+  TICK_RATE: 30,
+  WIN_SCORE: 5,
+};
+
+if (typeof module !== 'undefined') module.exports = CONSTANTS;
+Edited
+constants.js
++5
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\shared\constants.js
+  PLAYER_SPEED: 0.008,
+  BALL_FRICTION: 0.01,
+
+  BOOST_MAX:              100,
+  BOOST_DRAIN_RATE:       1.5,   // per tick while boosting
+  BOOST_REGEN_RATE:       0.4,   // per tick while not boosting
+  BOOST_FORCE_MULTIPLIER: 2.5,
+
+  TICK_RATE: 30,
+  WIN_SCORE: 5,
+Edited
+physics.js
++2
+-2
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\physics.js
+function applyInputs(body, input) {
+  const force = C.PLAYER_SPEED;
+function applyInputs(body, input, boosting) {
+  const force = C.PLAYER_SPEED * (boosting ? C.BOOST_FORCE_MULTIPLIER : 1);
+  if (input.up)    Body.applyForce(body, body.position, { x: 0,      y: -force });
+  if (input.down)  Body.applyForce(body, body.position, { x: 0,      y:  force });
+  if (input.left)  Body.applyForce(body, body.position, { x: -force, y: 0 });
+  if (input.right) Body.applyForce(body, body.position, { x:  force, y: 0 });
+}
+Updated
+gameLoop.js
++71
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\gameLoop.js
+const C = require('../shared/constants');
+const { createPhysics, applyInputs, stepWorld, checkGoal, resetPositions, getState } = require('./physics');
+
+const TICK_MS = 1000 / C.TICK_RATE;
+
+function startCountdown(io, roomId, callback) {
+  [3, 2, 1].forEach((n, i) => {
+    setTimeout(() => io.to(roomId).emit('countdown', n), i * 1000);
+  });
+  setTimeout(() => io.to(roomId).emit('countdown', 'GO!'), 3000);
+  setTimeout(callback, 3500);
+}
+
+function startGameLoop(io, session, map) {
+  const { engine, player1, player2, ball } = createPhysics(map);
+  session.physics = { engine, player1, player2, ball };
+
+  session.interval = setInterval(() => {
+    if (session.scoring) return;
+
+    // boost logic
+    for (const pNum of [1, 2]) {
+      const input    = session.inputs[pNum] || {};
+      const boosting = input.boost && session.boosts[pNum] > 0;
+
+      session.boosts[pNum] = boosting
+        ? Math.max(0,             session.boosts[pNum] - C.BOOST_DRAIN_RATE)
+        : Math.min(C.BOOST_MAX,   session.boosts[pNum] + C.BOOST_REGEN_RATE);
+
+      const body = pNum === 1 ? player1 : player2;
+      applyInputs(body, input, boosting);
+    }
+
+    stepWorld(engine, TICK_MS);
+
+    const scorer = checkGoal(ball, map);
+    if (scorer) {
+      session.scoring = true;
+      session.score[scorer]++;
+
+      const winner = session.score[scorer] >= C.WIN_SCORE ? scorer : null;
+      io.to(session.roomId).emit('goal', { scorer, score: { ...session.score }, winner });
+
+      if (winner) {
+        stopGameLoop(session);
+        return;
+      }
+
+      setTimeout(() => {
+        resetPositions(map, player1, player2, ball);
+        session.boosts = { 1: C.BOOST_MAX, 2: C.BOOST_MAX };
+        startCountdown(io, session.roomId, () => { session.scoring = false; });
+      }, 500);
+      return;
+    }
+
+    const state = getState(player1, player2, ball);
+    io.to(session.roomId).emit('state', {
+      ...state,
+      score:  session.score,
+      boosts: session.boosts,
+    });
+  }, TICK_MS);
+}
+
+function stopGameLoop(session) {
+  clearInterval(session.interval);
+  session.interval = null;
+}
+
+module.exports = { startGameLoop, stopGameLoop, startCountdown };
+Updated
+index.js
++72
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\index.js
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
+const { startGameLoop, stopGameLoop, startCountdown } = require('./gameLoop');
+const maps = require('../shared/maps');
+const C = require('../shared/constants');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+app.use('/shared', express.static(path.join(__dirname, '../shared')));
+app.use(express.static(path.join(__dirname, '../client')));
+
+const activeMap = maps['classic'];
+
+const session = {
+  roomId:  'main',
+  players: {},
+  inputs:  { 1: {}, 2: {} },
+  score:   { 1: 0, 2: 0 },
+  boosts:  { 1: C.BOOST_MAX, 2: C.BOOST_MAX },
+  scoring: false,
+  physics: null,
+  interval: null,
+};
+
+io.on('connection', (socket) => {
+  const taken = Object.values(session.players);
+  if (taken.length >= 2) {
+    socket.emit('full');
+    socket.disconnect();
+    return;
+  }
+
+  const playerNumber = taken.includes(1) ? 2 : 1;
+  session.players[socket.id] = playerNumber;
+  socket.join(session.roomId);
+
+  socket.emit('assigned', { playerNumber, map: activeMap });
+  console.log(`Player ${playerNumber} connected (${socket.id})`);
+
+  if (Object.keys(session.players).length === 2 && !session.interval) {
+    console.log('Both players connected — starting countdown');
+    session.scoring = true;
+    startCountdown(io, session.roomId, () => {
+      session.scoring = false;
+      startGameLoop(io, session, activeMap);
+    });
+  }
+
+  socket.on('input', (input) => {
+    session.inputs[playerNumber] = input;
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`Player ${playerNumber} disconnected`);
+    delete session.players[socket.id];
+    session.inputs[playerNumber] = {};
+
+    if (Object.keys(session.players).length < 2) {
+      stopGameLoop(session);
+      session.scoring = false;
+    }
+  });
+});
+
+const PORT = 3000;
+server.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
+});
+Edited
+input.js
++1
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\input.js
+function getInput() {
+  return {
+    up:    !!(keys['w'] || keys['W'] || keys['ArrowUp']),
+    down:  !!(keys['s'] || keys['S'] || keys['ArrowDown']),
+    left:  !!(keys['a'] || keys['A'] || keys['ArrowLeft']),
+    right: !!(keys['d'] || keys['D'] || keys['ArrowRight']),
+    boost: !!(keys['Shift']),
+  };
+}
+Updated
+network.js
++25
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\network.js
+function initNetwork(onAssigned, onState, onGoal, onCountdown) {
+  const socket = io();
+
+  socket.on('assigned', ({ playerNumber, map }) => {
+    onAssigned(playerNumber, map);
+  });
+
+  socket.on('state', (state) => {
+    onState(state);
+  });
+
+  socket.on('goal', ({ scorer, score, winner }) => {
+    onGoal(scorer, score, winner);
+  });
+
+  socket.on('countdown', (value) => {
+    onCountdown(value);
+  });
+
+  socket.on('full', () => {
+    document.getElementById('status').textContent = 'Game is full. Try again later.';
+  });
+
+  return socket;
+}
+Updated
+game.js
++82
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\game.js
+let playerNumber = null;
+let activeMap    = null;
+let ctx          = null;
+let socket       = null;
+
+let prevSnapshot  = null;
+let currSnapshot  = null;
+let latestScore   = { 1: 0, 2: 0 };
+let latestBoosts  = { 1: 100, 2: 100 };
+let winner        = null;
+let countdown     = null;
+
+const TICK_MS = 1000 / CONSTANTS.TICK_RATE;
+
+socket = initNetwork(
+  (num, map) => {
+    playerNumber = num;
+    activeMap = map;
+    ctx = initRenderer(map);
+
+    const color = num === 1 ? 'blue' : 'orange';
+    document.getElementById('status').textContent =
+      `You are Player ${num} (${color}). Waiting for opponent...`;
+  },
+  (state) => {
+    const { score, boosts, ...gameState } = state;
+    if (score)  latestScore  = score;
+    if (boosts) latestBoosts = boosts;
+
+    prevSnapshot = currSnapshot;
+    currSnapshot = { state: gameState, time: performance.now() };
+
+    document.getElementById('status').textContent =
+      `Player ${playerNumber} — WASD to move, Shift to boost`;
+  },
+  (scorer, score, w) => {
+    latestScore = score;
+    if (w) {
+      winner = w;
+      document.getElementById('status').textContent = `Player ${w} wins!`;
+    } else {
+      document.getElementById('status').textContent = `Player ${scorer} scored!`;
+    }
+  },
+  (value) => {
+    countdown = value;
+    // clear GO! after it displays briefly
+    if (value === 'GO!') setTimeout(() => { countdown = null; }, 500);
+  }
+);
+
+setInterval(() => {
+  if (socket && playerNumber) socket.emit('input', getInput());
+}, TICK_MS);
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function getInterpolatedState() {
+  if (!currSnapshot) return null;
+  if (!prevSnapshot) return currSnapshot.state;
+
+  const t = Math.min(1, (performance.now() - currSnapshot.time) / TICK_MS);
+  const a = prevSnapshot.state;
+  const b = currSnapshot.state;
+
+  return {
+    p1:   { x: lerp(a.p1.x,   b.p1.x,   t), y: lerp(a.p1.y,   b.p1.y,   t) },
+    p2:   { x: lerp(a.p2.x,   b.p2.x,   t), y: lerp(a.p2.y,   b.p2.y,   t) },
+    ball: { x: lerp(a.ball.x, b.ball.x, t), y: lerp(a.ball.y, b.ball.y, t) },
+  };
+}
+
+function gameLoop() {
+  if (ctx && activeMap) {
+    render(ctx, getInterpolatedState(), activeMap, latestScore, latestBoosts, winner, countdown);
+  }
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+Updated
+renderer.js
++126
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\renderer.js
+function initRenderer(map) {
+  const canvas = document.getElementById('gameCanvas');
+  canvas.width  = map.width;
+  canvas.height = map.height;
+  return canvas.getContext('2d');
+}
+
+function render(ctx, state, map, score, boosts, winner, countdown) {
+  const W = map.width;
+  const H = map.height;
+
+  // background
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, W, H);
+
+  // center line
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([10, 10]);
+  ctx.beginPath();
+  ctx.moveTo(W / 2, 0);
+  ctx.lineTo(W / 2, H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // goal openings
+  for (const goal of map.goals) {
+    const x = goal.side === 'left' ? 0 : W;
+    ctx.strokeStyle = goal.side === 'left' ? '#ff8c42' : '#4a9eff';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(x, goal.yMin);
+    ctx.lineTo(x, goal.yMax);
+    ctx.stroke();
+  }
+
+  // walls
+  ctx.fillStyle = '#555';
+  map.walls.forEach(w => {
+    ctx.fillRect(w.x - w.w / 2, w.y - w.h / 2, w.w, w.h);
+  });
+
+  // score
+  if (score) {
+    ctx.font = 'bold 36px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#4a9eff';
+    ctx.fillText(score[1], W / 2 - 50, 12);
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('-', W / 2, 12);
+    ctx.fillStyle = '#ff8c42';
+    ctx.fillText(score[2], W / 2 + 50, 12);
+  }
+
+  // boost bars
+  if (boosts) {
+    drawBoostBar(ctx, boosts[1], 12, H - 24, '#4a9eff');
+    drawBoostBar(ctx, boosts[2], W - 162, H - 24, '#ff8c42');
+  }
+
+  if (!state) return;
+
+  // player 1 (blue)
+  ctx.fillStyle = '#4a9eff';
+  ctx.beginPath();
+  ctx.arc(state.p1.x, state.p1.y, CONSTANTS.PLAYER_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+
+  // player 2 (orange)
+  ctx.fillStyle = '#ff8c42';
+  ctx.beginPath();
+  ctx.arc(state.p2.x, state.p2.y, CONSTANTS.PLAYER_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ball
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(state.ball.x, state.ball.y, CONSTANTS.BALL_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+
+  // countdown overlay
+  if (countdown !== null) {
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${countdown === 'GO!' ? 80 : 120}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(countdown, W / 2, H / 2);
+  }
+
+  // winner overlay
+  if (winner) {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = winner === 1 ? '#4a9eff' : '#ff8c42';
+    ctx.font = 'bold 72px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`Player ${winner} Wins!`, W / 2, H / 2);
+  }
+}
+
+function drawBoostBar(ctx, amount, x, y, color) {
+  const BAR_W = 150;
+  const BAR_H = 12;
+  const fill  = (amount / CONSTANTS.BOOST_MAX) * BAR_W;
+
+  // background track
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(x, y, BAR_W, BAR_H);
+
+  // fill
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, fill, BAR_H);
+
+  // label
+  ctx.fillStyle = '#aaa';
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('BOOST', x, y);
+}
+Ran
+Restart server with boost and countdown changes
+Bash
+taskkill //F //IM node.exe 2>&1 && sleep 1 && cd "C:/Users/Rissa's/Documents/cse 190 assignment 4" && node server/index.js &
+Command running in background with ID: bw0dnip3k. Output is being written to: C:\Users\Rissa's\AppData\Local\Temp\claude\C--Users-Rissa-s-Documents-cse-190-assignment-4\2a39e4fe-2fb2-4a54-a52f-32d5bafe938f\tasks\bw0dnip3k.output. You will be notified when it completes. To check interim output, use Read on that file path.
+Ran
+Verify server is running
+Bash
+sleep 2 && curl -s http://localhost:3000 > /dev/null && echo "server ok"
+server ok
+Server is up. Refresh both tabs — you should see a 3-2-1-GO! countdown before the game starts and after each goal, boost bars at the bottom corners, and Shift activating the speed burst. Let me know how it feels.
+
+there's some sort of jiggling effect when i hit the ball or wall
+
+The jiggling is coming from the physics simulator, not the rendering. When bodies collide under sustained force (player pressing into ball, ball against wall), Matter.js's impulse resolver creates small oscillations in position that get sent to the client every tick. Two targeted fixes: increase the solver's iteration count for more stable contact resolution, and cap max velocity to prevent spike-rebound cycles after high-speed impacts.
+
+
+Read 2 files, edited 2 files, ran 2 commands
+Read
+physics.js
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\physics.js
+const Matter = require('matter-js');
+const C = require('../shared/constants');
+
+const { Engine, Bodies, Body, World } = Matter;
+
+function createPhysics(map) {
+  const engine = Engine.create({ gravity: { x: 0, y: 0 } });
+  const world = engine.world;
+
+  const wallOpts = { isStatic: true, restitution: 0.5, friction: 0 };
+  const wallBodies = map.walls.map(w =>
+    Bodies.rectangle(w.x, w.y, w.w, w.h, wallOpts)
+  );
+  World.add(world, wallBodies);
+
+  const playerOpts = { restitution: 0.5, friction: 0, frictionAir: 0.1, label: 'player' };
+  const player1 = Bodies.circle(map.playerStarts[0].x, map.playerStarts[0].y, C.PLAYER_RADIUS, playerOpts);
+  const player2 = Bodies.circle(map.playerStarts[1].x, map.playerStarts[1].y, C.PLAYER_RADIUS, playerOpts);
+
+  const ballOpts = { restitution: 0.8, friction: C.BALL_FRICTION, frictionAir: 0.005, label: 'ball' };
+  const ball = Bodies.circle(map.ballStart.x, map.ballStart.y, C.BALL_RADIUS, ballOpts);
+
+  World.add(world, [player1, player2, ball]);
+
+  return { engine, player1, player2, ball };
+}
+
+function applyInputs(body, input, boosting) {
+  const force = C.PLAYER_SPEED * (boosting ? C.BOOST_FORCE_MULTIPLIER : 1);
+  if (input.up)    Body.applyForce(body, body.position, { x: 0,      y: -force });
+  if (input.down)  Body.applyForce(body, body.position, { x: 0,      y:  force });
+  if (input.left)  Body.applyForce(body, body.position, { x: -force, y: 0 });
+  if (input.right) Body.applyForce(body, body.position, { x:  force, y: 0 });
+}
+
+function stepWorld(engine, delta) {
+  Engine.update(engine, delta);
+}
+
+function checkGoal(ball, map) {
+  for (const goal of map.goals) {
+    const inYRange = ball.position.y > goal.yMin && ball.position.y < goal.yMax;
+    if (!inYRange) continue;
+    if (goal.side === 'left'  && ball.position.x < 0)          return goal.scoringPlayer;
+    if (goal.side === 'right' && ball.position.x > map.width)   return goal.scoringPlayer;
+  }
+  return null;
+}
+
+function resetPositions(map, player1, player2, ball) {
+  Body.setPosition(player1, map.playerStarts[0]);
+  Body.setPosition(player2, map.playerStarts[1]);
+  Body.setPosition(ball, map.ballStart);
+  Body.setVelocity(player1, { x: 0, y: 0 });
+  Body.setVelocity(player2, { x: 0, y: 0 });
+  Body.setVelocity(ball,    { x: 0, y: 0 });
+}
+
+function getState(player1, player2, ball) {
+  return {
+    p1:   { x: player1.position.x, y: player1.position.y },
+    p2:   { x: player2.position.x, y: player2.position.y },
+    ball: { x: ball.position.x,    y: ball.position.y },
+  };
+}
+
+module.exports = { createPhysics, applyInputs, stepWorld, checkGoal, resetPositions, getState };
+Edited
+physics.js
++14
+-1
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\physics.js
+const MAX_VELOCITY = 20;
+
+function createPhysics(map) {
+  const engine = Engine.create({ gravity: { x: 0, y: 0 } });
+  // more iterations = more stable contact resolution, less oscillation on impact
+  engine.positionIterations = 10;
+  engine.velocityIterations = 8;
+  const world = engine.world;
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\physics.js
+function stepWorld(engine, delta) {
+  Engine.update(engine, delta);
+}
+
+function capVelocity(body) {
+  const { x, y } = body.velocity;
+  const speed = Math.sqrt(x * x + y * y);
+  if (speed > MAX_VELOCITY) {
+    Body.setVelocity(body, { x: x * MAX_VELOCITY / speed, y: y * MAX_VELOCITY / speed });
+  }
+}
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\physics.js
+module.exports = { createPhysics, applyInputs, stepWorld, checkGoal, resetPositions, getState };
+module.exports = { createPhysics, applyInputs, stepWorld, capVelocity, checkGoal, resetPositions, getState };
+Read
+gameLoop.js
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\gameLoop.js
+const C = require('../shared/constants');
+const { createPhysics, applyInputs, stepWorld, checkGoal, resetPositions, getState } = require('./physics');
+
+const TICK_MS = 1000 / C.TICK_RATE;
+
+function startCountdown(io, roomId, callback) {
+  [3, 2, 1].forEach((n, i) => {
+    setTimeout(() => io.to(roomId).emit('countdown', n), i * 1000);
+  });
+  setTimeout(() => io.to(roomId).emit('countdown', 'GO!'), 3000);
+  setTimeout(callback, 3500);
+}
+
+function startGameLoop(io, session, map) {
+  const { engine, player1, player2, ball } = createPhysics(map);
+  session.physics = { engine, player1, player2, ball };
+
+  session.interval = setInterval(() => {
+    if (session.scoring) return;
+
+    // boost logic
+    for (const pNum of [1, 2]) {
+      const input    = session.inputs[pNum] || {};
+      const boosting = input.boost && session.boosts[pNum] > 0;
+
+      session.boosts[pNum] = boosting
+        ? Math.max(0,             session.boosts[pNum] - C.BOOST_DRAIN_RATE)
+        : Math.min(C.BOOST_MAX,   session.boosts[pNum] + C.BOOST_REGEN_RATE);
+
+      const body = pNum === 1 ? player1 : player2;
+      applyInputs(body, input, boosting);
+    }
+
+    stepWorld(engine, TICK_MS);
+
+    const scorer = checkGoal(ball, map);
+    if (scorer) {
+      session.scoring = true;
+      session.score[scorer]++;
+
+      const winner = session.score[scorer] >= C.WIN_SCORE ? scorer : null;
+      io.to(session.roomId).emit('goal', { scorer, score: { ...session.score }, winner });
+
+      if (winner) {
+        stopGameLoop(session);
+        return;
+      }
+
+      setTimeout(() => {
+        resetPositions(map, player1, player2, ball);
+        session.boosts = { 1: C.BOOST_MAX, 2: C.BOOST_MAX };
+        startCountdown(io, session.roomId, () => { session.scoring = false; });
+      }, 500);
+      return;
+    }
+
+    const state = getState(player1, player2, ball);
+    io.to(session.roomId).emit('state', {
+      ...state,
+      score:  session.score,
+      boosts: session.boosts,
+    });
+  }, TICK_MS);
+}
+
+function stopGameLoop(session) {
+  clearInterval(session.interval);
+  session.interval = null;
+}
+
+module.exports = { startGameLoop, stopGameLoop, startCountdown };
+Edited
+gameLoop.js
++4
+-1
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\gameLoop.js
+const { createPhysics, applyInputs, stepWorld, checkGoal, resetPositions, getState } = require('./physics');
+const { createPhysics, applyInputs, stepWorld, capVelocity, checkGoal, resetPositions, getState } = require('./physics');
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\gameLoop.js
+    stepWorld(engine, TICK_MS);
+    capVelocity(player1);
+    capVelocity(player2);
+    capVelocity(ball);
+
+    const scorer = checkGoal(ball, map);
+Ran
+Restart server with physics fixes
+Bash
+taskkill //F //IM node.exe 2>&1 && sleep 1 && cd "C:/Users/Rissa's/Documents/cse 190 assignment 4" && node server/index.js &
+Command running in background with ID: b0j3q41mi. Output is being written to: C:\Users\Rissa's\AppData\Local\Temp\claude\C--Users-Rissa-s-Documents-cse-190-assignment-4\2a39e4fe-2fb2-4a54-a52f-32d5bafe938f\tasks\b0j3q41mi.output. You will be notified when it completes. To check interim output, use Read on that file path.
+Ran
+Verify server is running
+Bash
+sleep 2 && curl -s http://localhost:3000 > /dev/null && echo "server ok"
+server ok
+Server is up. Refresh and test — the jiggling should be reduced or gone. If it's better but still noticeable, I can tune the MAX_VELOCITY cap in server/physics.js (lower = smoother but less snappy collisions) or reduce the ball's restitution from 0.8. Let me know what you see.
+
+the jiggling got worse
+
+the jiggling got worse
+
+My velocity cap was fighting the physics engine — cap it wrong and it creates a push-pull loop. Let me revert those changes and fix this properly by doubling the tick rate instead. Smaller timestep = smaller position change per tick = jitter becomes visually imperceptible.
+
+
+Edited 2 files
+Edited
+physics.js
++1
+-14
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\physics.js
+const MAX_VELOCITY = 20;
+
+function createPhysics(map) {
+  const engine = Engine.create({ gravity: { x: 0, y: 0 } });
+  // more iterations = more stable contact resolution, less oscillation on impact
+  engine.positionIterations = 10;
+  engine.velocityIterations = 8;
+  const world = engine.world;
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\physics.js
+function stepWorld(engine, delta) {
+  Engine.update(engine, delta);
+}
+
+function capVelocity(body) {
+  const { x, y } = body.velocity;
+  const speed = Math.sqrt(x * x + y * y);
+  if (speed > MAX_VELOCITY) {
+    Body.setVelocity(body, { x: x * MAX_VELOCITY / speed, y: y * MAX_VELOCITY / speed });
+  }
+}
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\physics.js
+module.exports = { createPhysics, applyInputs, stepWorld, capVelocity, checkGoal, resetPositions, getState };
+module.exports = { createPhysics, applyInputs, stepWorld, checkGoal, resetPositions, getState };
+Edited
+gameLoop.js
++1
+-4
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\gameLoop.js
+const { createPhysics, applyInputs, stepWorld, capVelocity, checkGoal, resetPositions, getState } = require('./physics');
+const { createPhysics, applyInputs, stepWorld, checkGoal, resetPositions, getState } = require('./physics');
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\gameLoop.js
+    stepWorld(engine, TICK_MS);
+    capVelocity(player1);
+    capVelocity(player2);
+    capVelocity(ball);
+
+    const scorer = checkGoal(ball, map);
+Now bump the tick rate to 60:
+
+
+Edited a file, ran 2 commands
+Edited
+constants.js
++1
+-1
+C:\Users\Rissa's\Documents\cse 190 assignment 4\shared\constants.js
+  TICK_RATE: 30,
+  TICK_RATE: 60,
+Ran
+Restart server with 60 tick rate and reverted physics
+Bash
+taskkill //F //IM node.exe 2>&1 && sleep 1 && cd "C:/Users/Rissa's/Documents/cse 190 assignment 4" && node server/index.js &
+Command running in background with ID: bustx7jow. Output is being written to: C:\Users\Rissa's\AppData\Local\Temp\claude\C--Users-Rissa-s-Documents-cse-190-assignment-4\2a39e4fe-2fb2-4a54-a52f-32d5bafe938f\tasks\bustx7jow.output. You will be notified when it completes. To check interim output, use Read on that file path.
+Ran
+Verify server is running
+Bash
+sleep 2 && curl -s http://localhost:3000 > /dev/null && echo "server ok"
+server ok
+Reverted the bad physics changes and switched to 60 ticks/s. At 60 ticks the physics timestep matches the browser render rate, so any micro-oscillation the engine produces gets rendered in the same frame it was generated — no more visible jitter from the mismatch. Refresh and let me know if it's better.
+
+it is not fixed
+
+Let me think about this differently. The real issue is the interpolation itself — every time a new snapshot arrives, t resets to 0 and we snap back to the previous state. At the moment of a collision, that backward snap is visible as a jiggle. The fix is to keep a snapshot buffer and advance a render time that moves smoothly forward, independent of when snapshots arrive.
+
+
+Created a file, ran 2 commands
+Updated
+game.js
++95
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\game.js
+let playerNumber = null;
+let activeMap    = null;
+let ctx          = null;
+let socket       = null;
+
+let latestScore  = { 1: 0, 2: 0 };
+let latestBoosts = { 1: 100, 2: 100 };
+let winner       = null;
+let countdown    = null;
+
+const TICK_MS = 1000 / CONSTANTS.TICK_RATE;
+
+// Snapshot buffer — keeps the last several received states with timestamps.
+// We render at a fixed delay behind the newest snapshot so we always have
+// two frames to interpolate between, and the render time never resets.
+const snapshots = [];
+const RENDER_DELAY = TICK_MS * 2;  // render 2 ticks behind latest
+
+socket = initNetwork(
+  (num, map) => {
+    playerNumber = num;
+    activeMap = map;
+    ctx = initRenderer(map);
+
+    const color = num === 1 ? 'blue' : 'orange';
+    document.getElementById('status').textContent =
+      `You are Player ${num} (${color}). Waiting for opponent...`;
+  },
+  (state) => {
+    const { score, boosts, ...gameState } = state;
+    if (score)  latestScore  = score;
+    if (boosts) latestBoosts = boosts;
+
+    snapshots.push({ state: gameState, time: performance.now() });
+    if (snapshots.length > 10) snapshots.shift();
+
+    document.getElementById('status').textContent =
+      `Player ${playerNumber} — WASD to move, Shift to boost`;
+  },
+  (scorer, score, w) => {
+    latestScore = score;
+    if (w) {
+      winner = w;
+      document.getElementById('status').textContent = `Player ${w} wins!`;
+    } else {
+      document.getElementById('status').textContent = `Player ${scorer} scored!`;
+    }
+  },
+  (value) => {
+    countdown = value;
+    if (value === 'GO!') setTimeout(() => { countdown = null; }, 500);
+  }
+);
+
+setInterval(() => {
+  if (socket && playerNumber) socket.emit('input', getInput());
+}, TICK_MS);
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function getInterpolatedState() {
+  if (snapshots.length < 2) return snapshots[0]?.state || null;
+
+  // render time advances smoothly — never resets on new snapshot
+  const renderTime = performance.now() - RENDER_DELAY;
+
+  // find the two snapshots that bracket renderTime
+  let prev = snapshots[0];
+  let curr = snapshots[1];
+  for (let i = 0; i < snapshots.length - 1; i++) {
+    prev = snapshots[i];
+    curr = snapshots[i + 1];
+    if (curr.time >= renderTime) break;
+  }
+
+  const span = curr.time - prev.time;
+  const t = span > 0 ? Math.max(0, Math.min(1, (renderTime - prev.time) / span)) : 1;
+
+  return {
+    p1:   { x: lerp(prev.state.p1.x,   curr.state.p1.x,   t), y: lerp(prev.state.p1.y,   curr.state.p1.y,   t) },
+    p2:   { x: lerp(prev.state.p2.x,   curr.state.p2.x,   t), y: lerp(prev.state.p2.y,   curr.state.p2.y,   t) },
+    ball: { x: lerp(prev.state.ball.x, curr.state.ball.x, t), y: lerp(prev.state.ball.y, curr.state.ball.y, t) },
+  };
+}
+
+function gameLoop() {
+  if (ctx && activeMap) {
+    render(ctx, getInterpolatedState(), activeMap, latestScore, latestBoosts, winner, countdown);
+  }
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+Ran
+Restart server
+Bash
+taskkill //F //IM node.exe 2>&1 && sleep 1 && cd "C:/Users/Rissa's/Documents/cse 190 assignment 4" && node server/index.js &
+Command running in background with ID: bjl1d3y37. Output is beiLet me stop guessing at the cause and add client-side position smoothing. This is a render-layer fix — instead of snapping to the interpolated position each frame, we ease toward it. It handles jitter from any source regardless of what's causing it, and at 60fps the added lag is only ~2-3 frames (under 50ms).
+
+
+Edited a file, ran 2 commands
+Edited
+game.js
++15
+-1
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\game.js
+let playerNumber = null;
+let activeMap    = null;
+let ctx          = null;
+let socket       = null;
+
+let latestScore  = { 1: 0, 2: 0 };
+let latestBoosts = { 1: 100, 2: 100 };
+let winner       = null;
+let countdown    = null;
+let smoothState  = null;
+
+const SMOOTH = 0.6; // fraction to close per frame — lower = smoother, less snappy
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\game.js
+function smoothen(current, target) {
+  if (!current) return target;
+  return {
+    p1:   { x: lerp(current.p1.x,   target.p1.x,   SMOOTH), y: lerp(current.p1.y,   target.p1.y,   SMOOTH) },
+    p2:   { x: lerp(current.p2.x,   target.p2.x,   SMOOTH), y: lerp(current.p2.y,   target.p2.y,   SMOOTH) },
+    ball: { x: lerp(current.ball.x, target.ball.x, SMOOTH), y: lerp(current.ball.y, target.ball.y, SMOOTH) },
+  };
+}
+
+function gameLoop() {
+  if (ctx && activeMap) {
+    render(ctx, getInterpolatedState(), activeMap, latestScore, latestBoosts, winner, countdown);
+    const interpolated = getInterpolatedState();
+    if (interpolated) smoothState = smoothen(smoothState, interpolated);
+    render(ctx, smoothState, activeMap, latestScore, latestBoosts, winner, countdown);
+  }
+  requestAnimationFrame(gameLoop);
+}
+Ran
+Restart server
+Bash
+taskkill //F //IM node.exe 2>&1 && sleep 1 && cd "C:/Users/Rissa's/Documents/cse 190 assignment 4" && node server/index.js &
+Command running in background with ID: bvsp3d5lj. Output is being written to: C:\Users\Rissa's\AppData\Local\Temp\claude\C--Users-Rissa-s-Documents-cse-190-assignment-4\2a39e4fe-2fb2-4a54-a52f-32d5bafe938f\tasks\bvsp3d5lj.output. You will be notified when it completes. To check interim output, use Read on that file path.
+Ran
+Verify server
+Bash
+sleep 2 && curl -s http://localhost:3000 > /dev/null && echo "server ok"
+server ok
+Refresh and test. The SMOOTH constant in client/game.js is easy to tune — if it still looks jittery raise it toward 0.8, if movement feels too floaty lower it toward 0.4. What do you see?
+
+can we remove the boost temporarily and see if it fixes
+
+The user wants to temporarily remove the boost to see if that fixes the jiggling. This makes sense as a diagnostic step. Let me remove the boost mechanic from both client and server temporarily.
+
+The cleanest way to do this:
+1. In `server/gameLoop.js`: remove the boost loop, go back to direct `applyInputs` calls without boosting
+2. In `client/input.js`: remove the `boost` field from `getInput()`
+3. In `client/game.js`: remove `latestBoosts` tracking
+4. In `client/renderer.js`: remove boost bar rendering
+5. In `server/index.js`: remove `session.boosts` initialization
+
+
+Actually, I should keep this minimal since the user said "temporarily" — I'll just disable the boost logic on the server side and hide the boost bars from rendering, leaving the rest of the code intact so it's easy to revert.
+Good diagnostic idea. Minimal changes — just disable the boost logic on the server and hide the bars on the client.
+
+
+Edited 2 files, ran 2 commands
+Edited
+gameLoop.js
++3
+-12
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\gameLoop.js
+    // boost logic
+    for (const pNum of [1, 2]) {
+      const input    = session.inputs[pNum] || {};
+      const boosting = input.boost && session.boosts[pNum] > 0;
+
+      session.boosts[pNum] = boosting
+        ? Math.max(0,             session.boosts[pNum] - C.BOOST_DRAIN_RATE)
+        : Math.min(C.BOOST_MAX,   session.boosts[pNum] + C.BOOST_REGEN_RATE);
+
+      const body = pNum === 1 ? player1 : player2;
+      applyInputs(body, input, boosting);
+    }
+    // boost temporarily disabled
+    applyInputs(player1, session.inputs[1] || {}, false);
+    applyInputs(player2, session.inputs[2] || {}, false);
+Edited
+renderer.js
++5
+-5
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\renderer.js
+  // boost bars
+  if (boosts) {
+    drawBoostBar(ctx, boosts[1], 12, H - 24, '#4a9eff');
+    drawBoostBar(ctx, boosts[2], W - 162, H - 24, '#ff8c42');
+  }
+  // boost bars temporarily disabled
+  // if (boosts) {
+  //   drawBoostBar(ctx, boosts[1], 12, H - 24, '#4a9eff');
+  //   drawBoostBar(ctx, boosts[2], W - 162, H - 24, '#ff8c42');
+  // }
+Ran
+Restart server with boost disabled
+Bash
+taskkill //F //IM node.exe 2>&1 && sleep 1 && cd "C:/Users/Rissa's/Documents/cse 190 assignment 4" && node server/index.js &
+Command running in background with ID: b4o5tywwv. Output is being written to: C:\Users\Rissa's\AppData\Local\Temp\claude\C--Users-Rissa-s-Documents-cse-190-assignment-4\2a39e4fe-2fb2-4a54-a52f-32d5bafe938f\tasks\b4o5tywwv.output. You will be notified when it completes. To check interim output, use Read on that file path.
+Ran
+Verify server
+Bash
+sleep 2 && curl -s http://localhost:3000 > /dev/null && echo "server ok"
+Exit code 7
+
+Background task failed
+Verify server
+
+Background task completed
+Background command "Restart server with boost disabled" completed (exit code 0)
+
+Ran 2 commands
+Ran
+Check server startup errors
+Bash
+cd "C:/Users/Rissa's/Documents/cse 190 assignment 4" && node server/index.js 2>&1 | head -20
+Command running in background with ID: be0l28if1. Output is being written to: C:\Users\Rissa's\AppData\Local\Temp\claude\C--Users-Rissa-s-Documents-cse-190-assignment-4\2a39e4fe-2fb2-4a54-a52f-32d5bafe938f\tasks\be0l28if1.output. You will be notified when it completes. To check interim output, use Read on that file path.
+Ran
+Check if server is up
+Bash
+sleep 3 && curl -s http://localhost:3000 > /dev/null && echo "server ok" || echo "server failed"
+server ok
+Server is up. Refresh both tabs and test — does the jiggling go away without boost? That'll tell us exactly where to look.
+
+No it does not go away but it used to work a while ago
+
+OK so the jiggling is not from boost. It was working a while ago. Let me think about what changed over time.
+
+The user said it was working before boost addition. But now with boost disabled it still jiggles. So the jiggling was introduced by something other than boost itself.
+
+Let me think about ALL the changes I made since the beginning, in order:
+1. Initial build - worked
+2. Added map system - worked ("looks good")
+3. Added goals/scoring - worked ("looks good")
+4. Added boost + countdown - jiggling appeared
+5. Various attempts to fix: tick rate changes, physics changes, snapshot buffer, smoothing
+
+
+6. Now I need to isolate what in that boost+countdown commit caused it. The boost physics itself isn't the culprit since disabling boost doesn't stop the jiggling. So I'm looking at the other changes: the countdown timer logic, the scoring pause mechanism, boost tracking in the session, and input handling modifications.
+
+The most significant change on the client side was switching the rendering approach in `game.js` from directly using the latest state to interpolating between previous and current snapshots. But wait—we already had interpolation working smoothly before the boost commit, so that's not new. Let me trace back: we started with snapped rendering, added interpolation to fix choppiness, then added goals and scoring without issues. The jiggling only appeared after boost+countdown went in. So something in that specific commit is interfering with the interpolation that was working fine before.
+
+Looking at what's changed since the good state: the tick rate jumped from 30 to 60, we've been tweaking the physics with velocity caps and iteration counts, switched to a snapshot buffer system, and added position smoothing. The original working version was simpler—just 30 ticks per second with basic prev/curr lerping and no smoothing layer. The question is whether one of these changes is causing the jiggling, or if it's an interaction between them.
+
+Let me trace through the snapshot buffer logic to see if there's a bug there. With a 60 tick rate, each tick is about 16.67ms, and we're rendering 33.33ms behind real time. The buffer holds 10 snapshots spanning roughly 167ms, so we should have plenty of history to find the right pair to interpolate between. I'm checking the loop that finds the bracketing snapshots...
+
+Checking the snapshot search logic...
+
+When we have fewer than 2 snapshots, we just return the available state. With 2 or more snapshots, the loop finds the pair where the current snapshot's time is at or past the render time, then interpolates. If the render time is older than our oldest snapshot, the interpolation factor goes negative and gets clamped to 0, so we'd render the oldest state we have. That seems reasonable, but I'm wondering if this edge case is actually causing the visual issue.
+
+Let me trace through what happens at startup: the render time is always 33ms behind the current time, so for the first ~33ms before snapshots accumulate, the render time is actually before any snapshot exists. We'd be stuck showing the oldest state until the render time catches up. After a goal reset when states pause for 4.5 seconds total, the same thing happens—when states resume, there's a gap where render time is ahead of the snapshot buffer again.
+
+So neither of these scenarios causes jiggling, just a brief freeze. Let me think about what "jiggling" actually means—the user said it happens when they hit the ball or wall, which sounds like rapid visual oscillation. Could the smoothing function itself be the culprit?
+
+Smoothing interpolation...
+
+Actually, I'm overthinking this. Let me just revert everything back to what was working: restore the tick rate to 30, go back to simple prev/curr interpolation in game.js, strip out the smoothing and snapshot buffer entirely. That way I can isolate whether these changes are actually what introduced the jiggling. Still writing interpolation logic... I'm tracing through the render function calls across different versions of the code to understand when the jiggling started. The initial setup with interpolation worked fine, then scoring was added without issues, but the jiggling appeared after boost was implemented. I'm realizing that TICK_RATE was changed from 30 to 60 as one of my attempted fixes, and I need to figure out whether the problem originated at 30 ticks per second after boost was added, or if it's related to the rate change itself.
+
+Looking at what's actually changed between the last working state and now—the TICK_RATE increase, the switch from simple prev/curr interpolation to a snapshot buffer with smoothing, the boost implementation, and the countdown logic—I think the most likely culprit is the game.js rendering logic. Let me revert that to the simpler interpolation approach and see if that resolves it.
+
+Writing reverted game.js...
+The jiggling survived boost being disabled, which means I introduced it with one of my "fix" attempts. The two biggest changes I made were switching to the snapshot buffer interpolation and bumping the tick rate to 60. Let me revert both — go back to the simple prev/curr interpolation and 30 ticks/s that was working.
+
+
+Edited a file, created a file, ran 2 commands
+Edited
+constants.js
++1
+-1
+C:\Users\Rissa's\Documents\cse 190 assignment 4\shared\constants.js
+  TICK_RATE: 60,
+  TICK_RATE: 30,
+Updated
+game.js
++81
+-0
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\game.js
+let playerNumber = null;
+let activeMap    = null;
+let ctx          = null;
+let socket       = null;
+
+let prevSnapshot = null;
+let currSnapshot = null;
+let latestScore  = { 1: 0, 2: 0 };
+let latestBoosts = { 1: 100, 2: 100 };
+let winner       = null;
+let countdown    = null;
+
+const TICK_MS = 1000 / CONSTANTS.TICK_RATE;
+
+socket = initNetwork(
+  (num, map) => {
+    playerNumber = num;
+    activeMap = map;
+    ctx = initRenderer(map);
+
+    const color = num === 1 ? 'blue' : 'orange';
+    document.getElementById('status').textContent =
+      `You are Player ${num} (${color}). Waiting for opponent...`;
+  },
+  (state) => {
+    const { score, boosts, ...gameState } = state;
+    if (score)  latestScore  = score;
+    if (boosts) latestBoosts = boosts;
+
+    prevSnapshot = currSnapshot;
+    currSnapshot = { state: gameState, time: performance.now() };
+
+    document.getElementById('status').textContent =
+      `Player ${playerNumber} — WASD to move, Shift to boost`;
+  },
+  (scorer, score, w) => {
+    latestScore = score;
+    if (w) {
+      winner = w;
+      document.getElementById('status').textContent = `Player ${w} wins!`;
+    } else {
+      document.getElementById('status').textContent = `Player ${scorer} scored!`;
+    }
+  },
+  (value) => {
+    countdown = value;
+    if (value === 'GO!') setTimeout(() => { countdown = null; }, 500);
+  }
+);
+
+setInterval(() => {
+  if (socket && playerNumber) socket.emit('input', getInput());
+}, TICK_MS);
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function getInterpolatedState() {
+  if (!currSnapshot) return null;
+  if (!prevSnapshot) return currSnapshot.state;
+
+  const t = Math.min(1, (performance.now() - currSnapshot.time) / TICK_MS);
+  const a = prevSnapshot.state;
+  const b = currSnapshot.state;
+
+  return {
+    p1:   { x: lerp(a.p1.x,   b.p1.x,   t), y: lerp(a.p1.y,   b.p1.y,   t) },
+    p2:   { x: lerp(a.p2.x,   b.p2.x,   t), y: lerp(a.p2.y,   b.p2.y,   t) },
+    ball: { x: lerp(a.ball.x, b.ball.x, t), y: lerp(a.ball.y, b.ball.y, t) },
+  };
+}
+
+function gameLoop() {
+  if (ctx && activeMap) {
+    render(ctx, getInterpolatedState(), activeMap, latestScore, latestBoosts, winner, countdown);
+  }
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+Ran
+Restart server
+Bash
+taskkill //F //IM node.exe 2>&1 && sleep 1 && cd "C:/Users/Rissa's/Documents/cse 190 assignment 4" && node server/index.js &
+Command running in background with ID: b7j466v6u. Output is being written to: C:\Users\Rissa's\AppData\Local\Temp\claude\C--Users-Rissa-s-Documents-cse-190-assignment-4\2a39e4fe-2fb2-4a54-a52f-32d5bafe938f\tasks\b7j466v6u.output. You will be notified when it completes. To check interim output, use Read on that file path.
+Ran
+Verify server
+Bash
+sleep 2 && curl -s http://localhost:3000 > /dev/null && echo "server ok"
+server ok
+
+Background task completed
+Background command "Restart server" completed (exit code 0)
+
+Background task completed
+Background command "Check server startup errors" completed (exit code 0)
+Refresh and test. This is the exact interpolation setup that was working before my fix attempts. If the jiggling is gone now, we know the snapshot buffer or the tick rate change broke it, and we can re-add boost cleanly on top. If it's still there, the issue predates my changes and we need to look elsewhere.
+
+it looks good!
+
+The simple prev/curr interpolation at 30 ticks/s is working well again. Now I need to figure out how to re-add boost without breaking it.
+
+The jiggling was introduced during my "fix" attempts (snapshot buffer, 60 tick rate). Now we're back to the working state with:
+- 30 ticks/s
+- Simple prev/curr interpolation
+- Boost disabled server-side
+
+Now I need to re-enable boost. The question is: will boost cause jiggling when re-enabled?
+
+The user originally said "there's some sort of jiggling effect when I hit the ball or wall" AFTER boost was added. 
+
+So the simple interpolation handles the baseline movement fine—the jiggling was actually from my attempted fixes, not the boost itself. I should re-enable boost at the reduced 1.8 multiplier and have the user test it to see if the jiggling returns.
+Good. The snapshot buffer and tick rate change were the culprits, not boost itself. Let me re-enable boost now that we're back on the stable base.
+
+
+Edited 2 files, ran 2 commands
+Edited
+gameLoop.js
++12
+-3
+C:\Users\Rissa's\Documents\cse 190 assignment 4\server\gameLoop.js
+    // boost temporarily disabled
+    applyInputs(player1, session.inputs[1] || {}, false);
+    applyInputs(player2, session.inputs[2] || {}, false);
+    // boost logic
+    for (const pNum of [1, 2]) {
+      const input    = session.inputs[pNum] || {};
+      const boosting = input.boost && session.boosts[pNum] > 0;
+
+      session.boosts[pNum] = boosting
+        ? Math.max(0,           session.boosts[pNum] - C.BOOST_DRAIN_RATE)
+        : Math.min(C.BOOST_MAX, session.boosts[pNum] + C.BOOST_REGEN_RATE);
+
+      const body = pNum === 1 ? player1 : player2;
+      applyInputs(body, input, boosting);
+    }
+Edited
+renderer.js
++5
+-5
+C:\Users\Rissa's\Documents\cse 190 assignment 4\client\renderer.js
+  // boost bars temporarily disabled
+  // if (boosts) {
+  //   drawBoostBar(ctx, boosts[1], 12, H - 24, '#4a9eff');
+  //   drawBoostBar(ctx, boosts[2], W - 162, H - 24, '#ff8c42');
+  // }
+  // boost bars
+  if (boosts) {
+    drawBoostBar(ctx, boosts[1], 12, H - 24, '#4a9eff');
+    drawBoostBar(ctx, boosts[2], W - 162, H - 24, '#ff8c42');
+  }
+Ran
+Restart server with boost re-enabled
+Bash
