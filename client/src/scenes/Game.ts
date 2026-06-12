@@ -57,6 +57,7 @@ let myTeam: Team   = 'A';
 const playerNames: Record<number, string> = { 0: 'P1', 1: 'P2' };
 
 let app: PIXI.Application | null = null;
+let tickerFn: (() => void) | null = null;
 let arenaRoot: PIXI.Container;
 let renderers: EntityRenderer[] = [];
 let ballRenderer: EntityRenderer;
@@ -125,8 +126,17 @@ export function initGame(
   const goalTop = map.goals[0].yMin, goalBottom = map.goals[0].yMax;
   const HUD_H = 108;
 
-  if (app) { app.destroy(false, { children: true }); app = null; }
-  app = new PIXI.Application({ view: canvas, width: W, height: H + HUD_H, backgroundColor: 0x000000, backgroundAlpha: 0, antialias: true });
+  // Re-initializing for a rematch: rebuilding the PIXI.Application on the same
+  // canvas creates a second WebGL context, which leaves the old one in a state
+  // that crashes the renderer (`checkMaxIfStatementsInShader`). Reuse the
+  // existing app/renderer and just rebuild the stage instead.
+  if (app) {
+    if (tickerFn) { app.ticker.remove(tickerFn); tickerFn = null; }
+    app.stage.removeChildren().forEach((child) => child.destroy({ children: true }));
+    app.renderer.resize(W, H + HUD_H);
+  } else {
+    app = new PIXI.Application({ view: canvas, width: W, height: H + HUD_H, backgroundColor: 0x000000, backgroundAlpha: 0, antialias: true });
+  }
 
   arenaRoot        = new PIXI.Container();
   const background = new PIXI.Container();
@@ -244,7 +254,7 @@ export function initGame(
   ui.addChild(waitingText);
 
   // ticker
-  app.ticker.add(() => {
+  tickerFn = () => {
     const now = performance.now();
     const dt  = app!.ticker.deltaMS;
 
@@ -337,7 +347,8 @@ export function initGame(
     }
 
     tickHud(state, mySlot, now);
-  });
+  };
+  app.ticker.add(tickerFn);
 }
 
 // ---- public API ----

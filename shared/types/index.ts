@@ -139,6 +139,7 @@ export type ServerToClientEvents = {
   // body just stops responding to input until they reconnect or the grace period expires
   opponent_disconnected_temp: (data: { slot: number; name: string; graceMs: number }) => void;
   opponent_reconnected: (data: { slot: number; name: string }) => void;
+  rematch_update: (data: { count: number; total: number }) => void;
 };
 
 export type ClientToServerEvents = {

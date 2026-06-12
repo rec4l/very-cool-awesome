@@ -65,7 +65,7 @@ type Screen = 'home' | 'room' | 'game' | 'postgame';
 function showScreen(name: Screen) {
   reconnectBanner.style.display = 'none';
 
-  if (name === 'room') {
+  if (name === 'room' && currentScreen === 'home') {
     document.getElementById('home-left')!.classList.add('faded');
     document.getElementById('home-right')!.classList.add('faded');
     document.getElementById('home-lobby-col')!.classList.add('lobby-active');
@@ -93,15 +93,15 @@ function showScreen(name: Screen) {
       stopMenuAnimation();
       stopHowToAnimation();
       gameCanvas.style.display = 'block';
-    } else if (name === 'home') {
+    } else if (name === 'home' || name === 'room') {
       document.getElementById('screen-home')!.style.display = 'flex';
       menuBgCanvas.style.display = 'block';
       startMenuAnimation(menuBgCanvas);
       howtoPanel.style.display = 'block';
       startHowToAnimation(howtoPanel);
-      document.getElementById('home-left')!.classList.remove('faded');
-      document.getElementById('home-right')!.classList.remove('faded');
-      document.getElementById('home-lobby-col')!.classList.remove('lobby-active');
+      document.getElementById('home-left')!.classList.toggle('faded', name === 'room');
+      document.getElementById('home-right')!.classList.toggle('faded', name === 'room');
+      document.getElementById('home-lobby-col')!.classList.toggle('lobby-active', name === 'room');
     } else {
       menuBgCanvas.style.display = 'none';
       howtoPanel.style.display   = 'none';
@@ -274,6 +274,12 @@ socket.on('goal', ({ scoringTeam, winner }) => {
       const teamName = winner === 'A' ? 'team a' : 'team b';
       el.textContent = `${teamName} wins!`;
       (el as HTMLElement).style.color = winner === 'A' ? '#b5d5fb' : '#fda4af';
+
+      const rematchBtn = document.getElementById('btn-rematch') as HTMLButtonElement;
+      rematchBtn.textContent = 'rematch';
+      rematchBtn.disabled = false;
+      document.getElementById('rematch-status')!.textContent = '';
+
       showScreen('postgame');
       playWin();
     }, 1500);
@@ -367,6 +373,14 @@ document.getElementById('btn-swap-team')!.addEventListener('click', () => {
 
 document.getElementById('btn-rematch')!.addEventListener('click', () => {
   socket.emit('rematch');
+  const btn = document.getElementById('btn-rematch') as HTMLButtonElement;
+  btn.textContent = 'rematch ✓';
+  btn.disabled = true;
+});
+
+socket.on('rematch_update', ({ count, total }) => {
+  const status = document.getElementById('rematch-status')!;
+  status.textContent = count >= total ? '' : `waiting for rematch... (${count}/${total})`;
 });
 
 document.getElementById('btn-leave')!.addEventListener('click', () => {

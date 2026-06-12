@@ -4,7 +4,7 @@ import { createPhysics, applyInputs, stepWorld } from './physics';
 import { classicMap } from '@shared/maps/classic';
 import { initialGoalBounds } from '@shared/maps/goalFrame';
 import { DEFAULT_MODE } from '@shared/modes';
-import { TICK_MS, BOOST_MAX, MAX_TELEPORT_CHARGES } from '@shared/constants';
+import { TICK_MS, BOOST_MAX, BOOST_START, MAX_TELEPORT_CHARGES, TELEPORT_START_CHARGES } from '@shared/constants';
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
@@ -62,6 +62,7 @@ export type Room = {
   goalBounds: GoalBounds;
   stalemateTicks: number;
   ready: boolean[];                // indexed by slot
+  rematchVotes: boolean[];         // indexed by slot — who's voted to rematch in postgame
   powerUps: PlayerPowerUps[];      // indexed by slot
   pickups: Pickup[];
   physics: ReturnType<typeof createPhysics>;
@@ -95,9 +96,13 @@ export function remainingWinner(room: Room): 'A' | 'B' | null {
   return null;
 }
 
+export function allVotedRematch(room: Room): boolean {
+  return room.players.length > 0 && room.players.every((p) => room.rematchVotes[p.slot]);
+}
+
 export function defaultPowerUps(): PlayerPowerUps {
   return {
-    boostBar: 0, teleportCooldown: 0, teleportCharges: 0, teleported: false,
+    boostBar: BOOST_START, teleportCooldown: 0, teleportCharges: TELEPORT_START_CHARGES, teleported: false,
     wreckingBall: { body: null, chain: null, prevActive: false, retracting: false, maxDist: 0, launchTicks: 0 },
   };
 }
@@ -133,6 +138,7 @@ export class RoomManager {
       goalBounds: initialGoalBounds(classicMap),
       stalemateTicks: 0,
       ready:    Array.from({ length: mode.maxPlayers }, () => false),
+      rematchVotes: Array.from({ length: mode.maxPlayers }, () => false),
       powerUps: Array.from({ length: mode.maxPlayers }, () => defaultPowerUps()),
       pickups:  defaultPickups(classicMap),
       physics:  createPhysics(classicMap, resolvePlayerStarts(classicMap, mode)),
@@ -166,6 +172,7 @@ export class RoomManager {
     }
     room.inputs = Array.from({ length: mode.maxPlayers }, (_, i) => room.inputs[i] ?? defaultInput());
     room.ready = Array.from({ length: mode.maxPlayers }, () => false);
+    room.rematchVotes = Array.from({ length: mode.maxPlayers }, () => false);
     room.powerUps = Array.from({ length: mode.maxPlayers }, (_, i) => room.powerUps[i] ?? defaultPowerUps());
     room.physics = createPhysics(room.map, resolvePlayerStarts(room.map, mode));
     room.reconnectTimers = Array.from({ length: mode.maxPlayers }, (_, i) => room.reconnectTimers[i] ?? null);
@@ -209,6 +216,7 @@ export class RoomManager {
 
       room.players.splice(idx, 1);
       room.ready[player.slot] = false;
+      room.rematchVotes[player.slot] = false;
       room.inputs[player.slot] = defaultInput();
 
       const pendingTimer = room.reconnectTimers[player.slot];

@@ -9,7 +9,7 @@ import { CLASSIC_1V1, TEAM_2V2, DEFAULT_MODE } from '@shared/modes';
 import type { GameMode } from '@shared/types';
 import { RECONNECT_GRACE_MS } from '@shared/constants';
 import { resetPositions, createPhysics } from './physics';
-import { RoomManager, defaultPickups, defaultPowerUps, defaultInput, resolvePlayerStarts, canStart, remainingWinner, type Room } from './rooms';
+import { RoomManager, defaultPickups, defaultPowerUps, defaultInput, resolvePlayerStarts, canStart, remainingWinner, allVotedRematch, type Room } from './rooms';
 import { startGame, cleanupWreckingBalls } from './game';
 
 const app = express();
@@ -59,6 +59,11 @@ function handlePlayerRemoved(room: Room, departed?: GuestPlayer) {
     emitLobbyUpdate(io, room);
     return;
   }
+  if (room.state === 'postgame') {
+    emitRematchUpdate(room);
+    if (allVotedRematch(room)) performRematchReset(room);
+    return;
+  }
   if ((room.state === 'playing' || room.state === 'countdown') && departed) {
     const countA = room.players.filter((p) => p.team === 'A').length;
     const countB = room.players.filter((p) => p.team === 'B').length;
@@ -72,6 +77,40 @@ function handlePlayerRemoved(room: Room, departed?: GuestPlayer) {
 
 function handleRoomClosed(room: Room) {
   io.to(room.code).emit('opponent_disconnected');
+}
+
+function emitRematchUpdate(room: Room) {
+  io.to(room.code).emit('rematch_update', {
+    count: room.players.filter((p) => room.rematchVotes[p.slot]).length,
+    total: room.players.length,
+  });
+}
+
+function performRematchReset(room: Room) {
+  cleanupWreckingBalls(room);
+  manager.stopLoop(room);
+  room.state      = 'lobby';
+  room.score      = { A: 0, B: 0 };
+  room.matchTicks = 0;
+  room.goalBounds    = initialGoalBounds(room.map);
+  room.stalemateTicks = 0;
+  room.ready    = Array.from({ length: room.mode.maxPlayers }, () => false);
+  room.rematchVotes = Array.from({ length: room.mode.maxPlayers }, () => false);
+  room.inputs   = Array.from({ length: room.mode.maxPlayers }, () => ({
+    up: false, down: false, left: false, right: false,
+    boosting: false, teleportTarget: null, pickaxeActive: false, pickaxeAngle: 0,
+  }));
+  room.powerUps = Array.from({ length: room.mode.maxPlayers }, () => defaultPowerUps());
+  room.pickups  = defaultPickups(room.map);
+  room.physics  = createPhysics(room.map, resolvePlayerStarts(room.map, room.mode));
+  resetPositions(room.physics);
+  // (#11) clear any pending reconnect grace timers and mark everyone present as connected
+  for (const player of room.players) {
+    clearReconnectTimer(room, player.slot);
+    player.connected = true;
+  }
+  emitLobbyUpdate(io, room);
+  console.log(`rematch in room ${room.code}`);
 }
 
 function clearReconnectTimer(room: Room, slot: number) {
@@ -200,29 +239,13 @@ io.on('connection', (socket) => {
   socket.on('rematch', () => {
     const room = manager.getRoomByPlayer(socket.id);
     if (!room || room.state !== 'postgame') return;
-    cleanupWreckingBalls(room);
-    manager.stopLoop(room);
-    room.state      = 'lobby';
-    room.score      = { A: 0, B: 0 };
-    room.matchTicks = 0;
-    room.goalBounds    = initialGoalBounds(room.map);
-    room.stalemateTicks = 0;
-    room.ready    = Array.from({ length: room.mode.maxPlayers }, () => false);
-    room.inputs   = Array.from({ length: room.mode.maxPlayers }, () => ({
-      up: false, down: false, left: false, right: false,
-      boosting: false, teleportTarget: null, pickaxeActive: false, pickaxeAngle: 0,
-    }));
-    room.powerUps = Array.from({ length: room.mode.maxPlayers }, () => defaultPowerUps());
-    room.pickups  = defaultPickups(room.map);
-    room.physics  = createPhysics(room.map, resolvePlayerStarts(room.map, room.mode));
-    resetPositions(room.physics);
-    // (#11) clear any pending reconnect grace timers and mark everyone present as connected
-    for (const player of room.players) {
-      clearReconnectTimer(room, player.slot);
-      player.connected = true;
-    }
-    emitLobbyUpdate(io, room);
-    console.log(`rematch in room ${room.code}`);
+    const player = room.players.find((p) => p.id === socket.id);
+    if (!player) return;
+
+    room.rematchVotes[player.slot] = true;
+    emitRematchUpdate(room);
+
+    if (allVotedRematch(room)) performRematchReset(room);
   });
 
   socket.on('leave_room', () => {

@@ -46,15 +46,17 @@ export const WB_PLAYER_IMPACT_BOOST = 10.0; // extra knockback applied to a hit 
 // boost
 export const BOOST_MAX                = 100;
 export const BOOST_DRAIN_PER_TICK     = BOOST_MAX / (3 * TICK_RATE); // empties in 3s
-export const BOOST_FORCE_MULTIPLIER   = 1.5;
+export const BOOST_FORCE_MULTIPLIER   = 2.25;
 export const BOOST_PICKUP_AMOUNT      = 50;
 export const BOOST_PICKUP_RADIUS      = 30;  // collection radius
 export const BOOST_PICKUP_RESPAWN_TICKS = 300; // 10s
+export const BOOST_START              = BOOST_MAX * 0.3; // starting boost bar fill
 
 // teleport
-export const TELEPORT_RANGE           = 200;
+export const TELEPORT_RANGE           = 260;
 export const TELEPORT_COOLDOWN_TICKS  = 120; // 4s per charge
 export const MAX_TELEPORT_CHARGES     = 3;
+export const TELEPORT_START_CHARGES   = 1;
 
 // reconnect (#11) — how long a mid-match disconnect is given to recover via
 // Socket.IO connection state recovery before being treated as a real departure.
