@@ -27,6 +27,11 @@ export const WALL_THICKNESS = 20;
 export const GOAL_GROWTH_INTERVAL_TICKS = 30 * TICK_RATE; // 30s of no scoring between steps
 export const GOAL_GROWTH_FRACTION       = 0.4;
 
+// each round (match start and after every goal) the goal mouth starts this much
+// smaller than its map-defined size, then grows back toward it via the stalemate
+// system above — same growth, just a smaller starting point
+export const GOAL_SIZE_REDUCTION = 0.3;
+
 // wrecking ball
 export const WRECKING_BALL_RADIUS  = 12;
 export const WRECKING_BALL_DENSITY = 0.004;

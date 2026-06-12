@@ -1,6 +1,6 @@
 import Matter from 'matter-js';
 import type { MapDefinition, PlayerInput, Vec2, GoalBounds, Team } from '@shared/types';
-import { buildGoalFrameWalls } from '@shared/maps/goalFrame';
+import { buildGoalFrameWalls, roundStartGoalBounds } from '@shared/maps/goalFrame';
 import {
   SUBSTEPS,
   PLAYER_RADIUS,
@@ -113,6 +113,17 @@ export function createPhysics(map: MapDefinition, playerStarts: Vec2[]) {
   });
 
   return { engine, players, ball, goalFrameBodies, playerStarts, ballStart: map.ballStart };
+}
+
+// Shrinks both goal mouths down to their round-start size (GOAL_SIZE_REDUCTION
+// smaller than the map default) and returns the resulting bounds — called
+// whenever a fresh round begins (match start, rematch, or after a goal).
+export function initRoundGoalBounds(physics: ReturnType<typeof createPhysics>, map: MapDefinition): GoalBounds {
+  const bounds = roundStartGoalBounds(map);
+  for (const side of ['left', 'right'] as const) {
+    regrowGoalFrame(physics, map, side, bounds[side].yMin, bounds[side].yMax);
+  }
+  return bounds;
 }
 
 // Tears down one side's goal-frame walls and rebuilds them around new bounds.

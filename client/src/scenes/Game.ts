@@ -1,6 +1,6 @@
 import * as PIXI from 'pixi.js';
 import type { GameState, MapDefinition, PlayerStyle, GoalBounds, Team } from '@shared/types';
-import { buildGoalFrameWalls } from '@shared/maps/goalFrame';
+import { buildGoalFrameWalls, roundStartGoalBounds } from '@shared/maps/goalFrame';
 import { PLAYER_RADIUS, BALL_RADIUS, CORNER_BEVEL } from '@shared/constants';
 import { EntityRenderer } from '../rendering/EntityRenderer';
 import { isTeleportMode } from '../input/keyboard';
@@ -123,7 +123,9 @@ export function initGame(
   myTeam     = team;
   currentMap = map;
   const W = map.width, H = map.height;
-  const goalTop = map.goals[0].yMin, goalBottom = map.goals[0].yMax;
+  // goals start each round GOAL_SIZE_REDUCTION smaller than the map default
+  // and grow back via goal_grow — match that here so the initial render lines up
+  const roundBounds = roundStartGoalBounds(map);
   const HUD_H = 108;
 
   // Re-initializing for a rematch: rebuilding the PIXI.Application on the same
@@ -172,8 +174,13 @@ export function initGame(
   markings.drawCircle(W / 2, H / 2, 80);
   background.addChild(markings);
 
+  const staticWalls = map.walls.filter((w) => w.role !== 'goalFrame');
+  const frameWalls = [
+    ...buildGoalFrameWalls(map, 'left',  roundBounds.left.yMin,  roundBounds.left.yMax),
+    ...buildGoalFrameWalls(map, 'right', roundBounds.right.yMin, roundBounds.right.yMax),
+  ];
   wallGraphics = new PIXI.Graphics();
-  drawWalls(wallGraphics, map, map.walls, W, H);
+  drawWalls(wallGraphics, map, [...staticWalls, ...frameWalls], W, H);
 
   const B = CORNER_BEVEL;
   const cornerMask = new PIXI.Graphics();
@@ -185,7 +192,7 @@ export function initGame(
   cornerMask.endFill();
 
   goalLines = new PIXI.Graphics();
-  drawGoalLines(goalLines, map, goalTop, goalBottom, goalTop, goalBottom);
+  drawGoalLines(goalLines, map, roundBounds.left.yMin, roundBounds.left.yMax, roundBounds.right.yMin, roundBounds.right.yMax);
 
   teleportGraphics = new PIXI.Graphics();
   wbGraphics       = new PIXI.Graphics();

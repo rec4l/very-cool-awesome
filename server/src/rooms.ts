@@ -1,8 +1,7 @@
 import type { GuestPlayer, PlayerInput, RoomState, MapDefinition, GameMode, GoalBounds, Vec2 } from '@shared/types';
 import Matter from 'matter-js';
-import { createPhysics, applyInputs, stepWorld } from './physics';
+import { createPhysics, applyInputs, stepWorld, initRoundGoalBounds } from './physics';
 import { classicMap } from '@shared/maps/classic';
-import { initialGoalBounds } from '@shared/maps/goalFrame';
 import { DEFAULT_MODE } from '@shared/modes';
 import { TICK_MS, BOOST_MAX, BOOST_START, MAX_TELEPORT_CHARGES, TELEPORT_START_CHARGES } from '@shared/constants';
 
@@ -125,6 +124,8 @@ export class RoomManager {
     let code = generateCode();
     while (this.rooms.has(code)) code = generateCode();
 
+    const physics = createPhysics(classicMap, resolvePlayerStarts(classicMap, mode));
+
     const room: Room = {
       code,
       state: 'waiting',
@@ -135,13 +136,13 @@ export class RoomManager {
       inputs:   Array.from({ length: mode.maxPlayers }, () => defaultInput()),
       score:    { A: 0, B: 0 },
       matchTicks: 0,
-      goalBounds: initialGoalBounds(classicMap),
+      goalBounds: initRoundGoalBounds(physics, classicMap),
       stalemateTicks: 0,
       ready:    Array.from({ length: mode.maxPlayers }, () => false),
       rematchVotes: Array.from({ length: mode.maxPlayers }, () => false),
       powerUps: Array.from({ length: mode.maxPlayers }, () => defaultPowerUps()),
       pickups:  defaultPickups(classicMap),
-      physics:  createPhysics(classicMap, resolvePlayerStarts(classicMap, mode)),
+      physics,
       loop: null,
       reconnectTimers: Array.from({ length: mode.maxPlayers }, () => null),
     };

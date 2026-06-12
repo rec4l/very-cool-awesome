@@ -13,18 +13,20 @@ import {
   applyRetractForce,
   regrowGoalFrame,
 } from './physics';
-import { initialGoalBounds, maxGoalSpan, growGoalBounds, isNearMax } from '@shared/maps/goalFrame';
+import { roundStartGoalBounds, maxGoalSpan, growGoalBounds, isNearMax } from '@shared/maps/goalFrame';
 import {
   TICK_MS,
   TICK_RATE,
   BOOST_DRAIN_PER_TICK,
   BOOST_FORCE_MULTIPLIER,
   BOOST_MAX,
+  BOOST_START,
   BOOST_PICKUP_AMOUNT,
   BOOST_PICKUP_RADIUS,
   BOOST_PICKUP_RESPAWN_TICKS,
   TELEPORT_RANGE,
   TELEPORT_COOLDOWN_TICKS,
+  TELEPORT_START_CHARGES,
   MAX_TELEPORT_CHARGES,
   PLAYER_RADIUS,
   CHAIN_LENGTH,
@@ -318,14 +320,14 @@ export function startGame(io: IO, manager: RoomManager, room: Room) {
       r.score[scoringTeam]++;
       r.state = 'countdown';
 
-      // a goal breaks the stalemate — reset timer and shrink goals back to default
+      // a goal breaks the stalemate — reset timer and shrink goals back to round-start size
       r.stalemateTicks = 0;
-      const defaultBounds = initialGoalBounds(room.map);
+      const roundBounds = roundStartGoalBounds(room.map);
       let resetGoalSize = false;
       for (const side of ['left', 'right'] as const) {
-        if (r.goalBounds[side].yMin !== defaultBounds[side].yMin || r.goalBounds[side].yMax !== defaultBounds[side].yMax) {
-          r.goalBounds[side] = defaultBounds[side];
-          regrowGoalFrame(r.physics, room.map, side, defaultBounds[side].yMin, defaultBounds[side].yMax);
+        if (r.goalBounds[side].yMin !== roundBounds[side].yMin || r.goalBounds[side].yMax !== roundBounds[side].yMax) {
+          r.goalBounds[side] = roundBounds[side];
+          regrowGoalFrame(r.physics, room.map, side, roundBounds[side].yMin, roundBounds[side].yMax);
           resetGoalSize = true;
         }
       }
@@ -335,7 +337,7 @@ export function startGame(io: IO, manager: RoomManager, room: Room) {
       io.to(r.code).emit('goal', {
         scoringTeam,
         score: { ...r.score },
-        ...(isWin ? { winner: scoringTeam } : {}),
+        ...(isWin ? { winner: scoringTeam, matchSeconds: Math.floor(r.matchTicks / TICK_RATE) } : {}),
       });
 
       if (isWin) {
@@ -351,9 +353,9 @@ export function startGame(io: IO, manager: RoomManager, room: Room) {
         assignSpawns(r);
         resetPositions(r.physics);
         for (const pu of r.powerUps) {
-          pu.boostBar = 0;
+          pu.boostBar = BOOST_START;
           pu.teleportCooldown = 0;
-          pu.teleportCharges = 0;
+          pu.teleportCharges = TELEPORT_START_CHARGES;
         }
         // restore pickups to active state after each goal
         for (const pickup of r.pickups) {

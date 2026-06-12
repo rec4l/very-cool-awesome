@@ -4,11 +4,10 @@ import path from 'path';
 import { Server } from 'socket.io';
 import type { ServerToClientEvents, ClientToServerEvents, PlayerInput, LobbyPlayer, GuestPlayer } from '@shared/types';
 import { MAPS } from '@shared/maps/index';
-import { initialGoalBounds } from '@shared/maps/goalFrame';
 import { CLASSIC_1V1, TEAM_2V2, DEFAULT_MODE } from '@shared/modes';
 import type { GameMode } from '@shared/types';
 import { RECONNECT_GRACE_MS } from '@shared/constants';
-import { resetPositions, createPhysics } from './physics';
+import { resetPositions, createPhysics, initRoundGoalBounds } from './physics';
 import { RoomManager, defaultPickups, defaultPowerUps, defaultInput, resolvePlayerStarts, canStart, remainingWinner, allVotedRematch, type Room } from './rooms';
 import { startGame, cleanupWreckingBalls } from './game';
 
@@ -92,7 +91,6 @@ function performRematchReset(room: Room) {
   room.state      = 'lobby';
   room.score      = { A: 0, B: 0 };
   room.matchTicks = 0;
-  room.goalBounds    = initialGoalBounds(room.map);
   room.stalemateTicks = 0;
   room.ready    = Array.from({ length: room.mode.maxPlayers }, () => false);
   room.rematchVotes = Array.from({ length: room.mode.maxPlayers }, () => false);
@@ -103,6 +101,7 @@ function performRematchReset(room: Room) {
   room.powerUps = Array.from({ length: room.mode.maxPlayers }, () => defaultPowerUps());
   room.pickups  = defaultPickups(room.map);
   room.physics  = createPhysics(room.map, resolvePlayerStarts(room.map, room.mode));
+  room.goalBounds = initRoundGoalBounds(room.physics, room.map);
   resetPositions(room.physics);
   // (#11) clear any pending reconnect grace timers and mark everyone present as connected
   for (const player of room.players) {
@@ -204,7 +203,7 @@ io.on('connection', (socket) => {
     if (!mode) return;
     if (!manager.setMode(room, mode)) return;
     room.pickups = defaultPickups(room.map);
-    room.goalBounds = initialGoalBounds(room.map);
+    room.goalBounds = initRoundGoalBounds(room.physics, room.map);
     room.stalemateTicks = 0;
     io.to(room.code).emit('mode_changed', { modeId: mode.id, maxPlayers: mode.maxPlayers, map: room.map });
     emitLobbyUpdate(io, room);
@@ -221,7 +220,7 @@ io.on('connection', (socket) => {
     room.map     = newMap;
     room.physics = createPhysics(newMap, resolvePlayerStarts(newMap, room.mode));
     room.pickups = defaultPickups(newMap);
-    room.goalBounds   = initialGoalBounds(newMap);
+    room.goalBounds   = initRoundGoalBounds(room.physics, newMap);
     room.stalemateTicks = 0;
     io.to(room.code).emit('map_changed', { map: newMap });
     console.log(`room ${room.code} map → ${mapId}`);

@@ -1,5 +1,5 @@
 import type { MapDefinition, MapWall, GoalBounds } from '../types';
-import { WALL_THICKNESS } from '../constants';
+import { WALL_THICKNESS, GOAL_SIZE_REDUCTION } from '../constants';
 
 // Builds the wall segments that physically frame one side's goal mouth: the
 // front-wall pieces above/below the opening, plus — if the map declares a
@@ -41,6 +41,19 @@ export function initialGoalBounds(map: MapDefinition): GoalBounds {
     left:  { yMin: left.yMin,  yMax: left.yMax },
     right: { yMin: right.yMin, yMax: right.yMax },
   };
+}
+
+// the goal mouth's bounds at the start of a round (match start and after every
+// goal): GOAL_SIZE_REDUCTION smaller than the map-defined size, centered on the
+// same midpoint, and left to grow back via growGoalBounds during a stalemate
+export function roundStartGoalBounds(map: MapDefinition): GoalBounds {
+  const shrink = (b: { yMin: number; yMax: number }) => {
+    const center = (b.yMin + b.yMax) / 2;
+    const halfSpan = (b.yMax - b.yMin) / 2 * (1 - GOAL_SIZE_REDUCTION);
+    return { yMin: center - halfSpan, yMax: center + halfSpan };
+  };
+  const initial = initialGoalBounds(map);
+  return { left: shrink(initial.left), right: shrink(initial.right) };
 }
 
 // the largest symmetric span the goal mouth can grow to before it would start

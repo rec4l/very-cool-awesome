@@ -48,6 +48,7 @@ let startAnywayTimer: ReturnType<typeof setTimeout> | null = null;
 // Player display info — keyed by slot number
 const playerNames:  Record<number, string> = { 0: 'P1', 1: 'P2' };
 const playerColors: Record<number, number> = {};
+const playerFaces:  Record<number, string> = {};
 const slotTeam:     Record<number, Team>   = {};
 
 // ---- DOM refs ----
@@ -207,10 +208,11 @@ socket.on('lobby_update', ({ players, maxPlayers, modeId, map }) => {
   currentModeId = modeId;
   storedMap = map;
 
-  // store names, colors, and team membership for winner banner + lobby UI
+  // store names, colors, faces, and team membership for winner banner + lobby UI
   for (const p of players) {
     playerNames[p.slot]  = p.name;
     playerColors[p.slot] = p.color;
+    playerFaces[p.slot]  = p.faceId;
     slotTeam[p.slot]     = p.team;
   }
 
@@ -264,7 +266,7 @@ socket.on('state', receiveState);
 
 socket.on('goal_grow', ({ goalBounds }) => receiveGoalGrow(goalBounds));
 
-socket.on('goal', ({ scoringTeam, winner }) => {
+socket.on('goal', ({ scoringTeam, score, winner, matchSeconds }) => {
   receiveGoal(scoringTeam);
   if (winner) {
     stopInputs();
@@ -274,6 +276,48 @@ socket.on('goal', ({ scoringTeam, winner }) => {
       const teamName = winner === 'A' ? 'team a' : 'team b';
       el.textContent = `${teamName} wins!`;
       (el as HTMLElement).style.color = winner === 'A' ? '#b5d5fb' : '#fda4af';
+
+      document.getElementById('final-score')!.textContent = `${score.A} - ${score.B}`;
+
+      const secs = matchSeconds ?? 0;
+      const mins = Math.floor(secs / 60);
+      const remSecs = secs % 60;
+      document.getElementById('match-duration')!.textContent =
+        `${mins}:${remSecs.toString().padStart(2, '0')}`;
+
+      for (const team of ['A', 'B'] as const) {
+        const slots = Object.entries(slotTeam)
+          .filter(([, t]) => t === team)
+          .map(([slot]) => Number(slot))
+          .sort((a, b) => a - b);
+
+        for (let n = 1; n <= 2; n++) {
+          const avatarEl = document.getElementById(`avatar-${team}-${n}`) as HTMLElement;
+          const slot = slots[n - 1];
+          if (slot === undefined) {
+            avatarEl.style.display = 'none';
+            continue;
+          }
+          avatarEl.style.display = 'flex';
+          const ballEl = document.getElementById(`ball-${team}-${n}`) as HTMLElement;
+          const faceEl = document.getElementById(`face-${team}-${n}`) as HTMLImageElement;
+          const nameEl = document.getElementById(`name-${team}-${n}`) as HTMLElement;
+          const colorHex = COLORS.find((c) => c.val === playerColors[slot])?.hex ?? (team === 'A' ? '#b5d5fb' : '#fda4af');
+          ballEl.style.background = colorHex;
+          faceEl.src              = `/assets/sprites/faces/${playerFaces[slot]}.png`;
+          faceEl.style.display    = 'block';
+          nameEl.textContent      = playerNames[slot];
+        }
+      }
+
+      const columnA = document.getElementById('team-column-A')!;
+      const columnB = document.getElementById('team-column-B')!;
+      columnA.classList.remove('winning-team', 'losing-team');
+      columnB.classList.remove('winning-team', 'losing-team');
+      const winningColumn = winner === 'A' ? columnA : columnB;
+      const losingColumn  = winner === 'A' ? columnB : columnA;
+      winningColumn.classList.add('winning-team');
+      losingColumn.classList.add('losing-team');
 
       const rematchBtn = document.getElementById('btn-rematch') as HTMLButtonElement;
       rematchBtn.textContent = 'rematch';

@@ -2,12 +2,13 @@ import { describe, it, expect } from 'vitest';
 import {
   buildGoalFrameWalls,
   initialGoalBounds,
+  roundStartGoalBounds,
   maxGoalSpan,
   growGoalBounds,
   isNearMax,
 } from './goalFrame';
 import { classicMap } from './classic';
-import { CORNER_BEVEL } from '../constants';
+import { CORNER_BEVEL, GOAL_SIZE_REDUCTION } from '../constants';
 
 describe('initialGoalBounds', () => {
   it('reads left/right goal bounds straight from the map definition', () => {
@@ -16,6 +17,22 @@ describe('initialGoalBounds', () => {
     const right = classicMap.goals.find((g) => g.side === 'right')!;
     expect(bounds.left).toEqual({ yMin: left.yMin, yMax: left.yMax });
     expect(bounds.right).toEqual({ yMin: right.yMin, yMax: right.yMax });
+  });
+});
+
+describe('roundStartGoalBounds', () => {
+  it('shrinks the span by GOAL_SIZE_REDUCTION while keeping the same center', () => {
+    const initial = initialGoalBounds(classicMap);
+    const round = roundStartGoalBounds(classicMap);
+    for (const side of ['left', 'right'] as const) {
+      const initialCenter = (initial[side].yMin + initial[side].yMax) / 2;
+      const roundCenter = (round[side].yMin + round[side].yMax) / 2;
+      expect(roundCenter).toBeCloseTo(initialCenter);
+
+      const initialSpan = initial[side].yMax - initial[side].yMin;
+      const roundSpan = round[side].yMax - round[side].yMin;
+      expect(roundSpan).toBeCloseTo(initialSpan * (1 - GOAL_SIZE_REDUCTION));
+    }
   });
 });
 
