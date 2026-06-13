@@ -618,7 +618,7 @@ export const LAUNCH_SPEED          = 8;
   - Room lifecycle — create, join, full, leave, disconnect, rematch
   - Power-up math — boost drain rate, teleport cooldown ticks, wrecking ball max distance and retract behavior
 - **Stretch (optional):** physics-stepping tests that run the Matter.js world forward N ticks and assert resulting state stays within tolerance — useful but fiddly (floating point, timing assumptions)
-- **Explicitly out of scope:** client/UI/rendering tests (PixiJS, particles, DOM screens) and full end-to-end tests — both require heavy mocking/scaffolding for low payoff relative to a class assignment; human playtesting covers that ground better
+- **Explicitly out of scope:** client/UI/rendering tests (PixiJS, particles, DOM screens) and full end-to-end tests — both require heavy mocking/scaffolding for low payoff right now; human playtesting covers that ground better
 - All new tests live alongside the code they test or in a parallel `__tests__` structure — keep it simple, no custom test framework abstractions
 
 ---

@@ -544,6 +544,7 @@ function updateRoomUI2(players: LobbyPlayer[]) {
     const faceEl   = document.getElementById(`lobby-face-${n}`) as HTMLImageElement;
     const nameEl   = document.getElementById(`lobby-name-${n}`) as HTMLElement;
     const statusEl = document.getElementById(`lobby-status-${n}`) as HTMLElement;
+    const botBtn   = document.getElementById(`lobby-bot-${n}`) as HTMLButtonElement;
 
     container.appendChild(cardEl);
     cardEl.style.display    = 'flex';
@@ -555,6 +556,16 @@ function updateRoomUI2(players: LobbyPlayer[]) {
     nameEl.style.color      = '#fff';
     statusEl.textContent    = p.ready ? 'ready' : 'not ready';
     statusEl.className      = `lobby-player-status ${p.ready ? 'ready' : 'not-ready'}`;
+
+    if (p.isBot && mySlot === 0) {
+      botBtn.textContent = 'remove bot';
+      botBtn.className   = 'lobby-bot-btn remove';
+      botBtn.style.display = 'block';
+      botBtn.onclick = () => socket.emit('remove_bot', { slot: p.slot });
+    } else {
+      botBtn.style.display = 'none';
+      botBtn.onclick = null;
+    }
 
     if (p.slot === mySlot) myTeam = p.team;
     if (p.slot === mySlot && p.ready) {
@@ -572,6 +583,7 @@ function updateRoomUI2(players: LobbyPlayer[]) {
     const faceEl = document.getElementById(`lobby-face-${n}`) as HTMLImageElement;
     const nameEl = document.getElementById(`lobby-name-${n}`) as HTMLElement;
     const statusEl = document.getElementById(`lobby-status-${n}`) as HTMLElement;
+    const botBtn = document.getElementById(`lobby-bot-${n}`) as HTMLButtonElement;
 
     container.appendChild(cardEl);
     cardEl.style.display    = 'flex';
@@ -582,6 +594,16 @@ function updateRoomUI2(players: LobbyPlayer[]) {
     nameEl.style.color      = '#333';
     statusEl.textContent    = '';
     statusEl.className      = 'lobby-player-status';
+
+    if (mySlot === 0) {
+      botBtn.textContent = '+ add bot';
+      botBtn.className   = 'lobby-bot-btn';
+      botBtn.style.display = 'block';
+      botBtn.onclick = () => socket.emit('add_bot');
+    } else {
+      botBtn.style.display = 'none';
+      botBtn.onclick = null;
+    }
   }
 
   // Each team column: active players first, then waiting placeholders up to teamSize.

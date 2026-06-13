@@ -2,6 +2,7 @@ import type { Server } from 'socket.io';
 import type { ServerToClientEvents, ClientToServerEvents, GameState, PlayerStyle, MapDefinition, Vec2 } from '@shared/types';
 import type { Room } from './rooms';
 import { defaultPickups, defaultPowerUps, RoomManager } from './rooms';
+import { computeBotInput } from './bot';
 import {
   applyInputs,
   stepWorld,
@@ -174,6 +175,11 @@ export function startGame(io: IO, manager: RoomManager, room: Room) {
           changed = true;
         }
         if (changed) io.to(r.code).emit('goal_grow', { goalBounds: r.goalBounds });
+      }
+
+      // ---- bot input (overwrite synthetic input each tick, no socket to receive from) ----
+      for (const player of r.players) {
+        if (player.isBot) r.inputs[player.slot] = computeBotInput(r, player.slot);
       }
 
       // ---- wrecking ball deploy (leading edge of E press) ----

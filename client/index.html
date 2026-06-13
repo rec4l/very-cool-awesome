@@ -458,6 +458,24 @@
       .lobby-player-status.ready     { color: #66bb6a; }
       .lobby-player-status.not-ready { color: #ff7043; }
 
+      .lobby-bot-btn {
+        font-family: monospace;
+        font-size: 10px;
+        font-weight: bold;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        border: 1px solid #334;
+        border-radius: 4px;
+        background: transparent;
+        color: #7c83ff;
+        padding: 4px 8px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .lobby-bot-btn:hover { border-color: #7c83ff; background: rgba(124, 131, 255, 0.1); color: #fff; }
+      .lobby-bot-btn.remove { color: #ff7043; }
+      .lobby-bot-btn.remove:hover { border-color: #ff7043; background: rgba(255, 112, 67, 0.1); }
+
       /* ---- divider ---- */
       .divider {
         width: 260px;
@@ -736,6 +754,7 @@
                 </div>
                 <span class="lobby-player-name" id="lobby-name-1">—</span>
                 <span class="lobby-player-status" id="lobby-status-1"></span>
+                <button class="lobby-bot-btn" id="lobby-bot-1" style="display:none;"></button>
               </div>
               <div class="lobby-player-card" id="lobby-card-2">
                 <div class="lobby-player-ball" id="lobby-ball-2">
@@ -743,6 +762,7 @@
                 </div>
                 <span class="lobby-player-name" id="lobby-name-2">waiting...</span>
                 <span class="lobby-player-status" id="lobby-status-2"></span>
+                <button class="lobby-bot-btn" id="lobby-bot-2" style="display:none;"></button>
               </div>
               <div class="lobby-player-card" id="lobby-card-3">
                 <div class="lobby-player-ball" id="lobby-ball-3">
@@ -750,6 +770,7 @@
                 </div>
                 <span class="lobby-player-name" id="lobby-name-3">waiting...</span>
                 <span class="lobby-player-status" id="lobby-status-3"></span>
+                <button class="lobby-bot-btn" id="lobby-bot-3" style="display:none;"></button>
               </div>
               <div class="lobby-player-card" id="lobby-card-4">
                 <div class="lobby-player-ball" id="lobby-ball-4">
@@ -757,6 +778,7 @@
                 </div>
                 <span class="lobby-player-name" id="lobby-name-4">waiting...</span>
                 <span class="lobby-player-status" id="lobby-status-4"></span>
+                <button class="lobby-bot-btn" id="lobby-bot-4" style="display:none;"></button>
               </div>
             </div>
 

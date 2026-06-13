@@ -3,7 +3,7 @@
 ## What this is
 A browser-based 2-player competitive physics soccer game (Rocket League-inspired). Two players join a room with a code, pick names, and try to hit a ball into each other's goal. First to 5 wins.
 
-This is a CSE 190 assignment. The developer draws pixel art sprites in Aseprite and has specific aesthetic preferences — hype and energetic tone, punchy UI copy, no corporate-sounding text.
+This started as a CSE 190 project and is now being developed as a real, ongoing project for real players — no class deadline, room for bigger features. The developer draws pixel art sprites in Aseprite and has specific aesthetic preferences — hype and energetic tone, punchy UI copy, no corporate-sounding text.
 
 ## Tech stack — locked, do not change
 | Layer | Technology |

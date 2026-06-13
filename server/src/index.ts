@@ -8,7 +8,7 @@ import { CLASSIC_1V1, TEAM_2V2, DEFAULT_MODE } from '@shared/modes';
 import type { GameMode } from '@shared/types';
 import { RECONNECT_GRACE_MS } from '@shared/constants';
 import { resetPositions, createPhysics, initRoundGoalBounds } from './physics';
-import { RoomManager, defaultPickups, defaultPowerUps, defaultInput, resolvePlayerStarts, canStart, remainingWinner, allVotedRematch, type Room } from './rooms';
+import { RoomManager, defaultPickups, defaultPowerUps, defaultBotState, defaultInput, resolvePlayerStarts, canStart, remainingWinner, allVotedRematch, type Room } from './rooms';
 import { startGame, cleanupWreckingBalls } from './game';
 
 const app = express();
@@ -44,6 +44,7 @@ function emitLobbyUpdate(io: IO, room: Room) {
     ready:  room.ready[p.slot],
     color:  p.color,
     faceId: p.faceId,
+    isBot:  p.isBot,
   }));
   io.to(room.code).emit('lobby_update', {
     players,
@@ -99,6 +100,7 @@ function performRematchReset(room: Room) {
     boosting: false, teleportTarget: null, pickaxeActive: false, pickaxeAngle: 0,
   }));
   room.powerUps = Array.from({ length: room.mode.maxPlayers }, () => defaultPowerUps());
+  room.botState = Array.from({ length: room.mode.maxPlayers }, () => defaultBotState());
   room.pickups  = defaultPickups(room.map);
   room.physics  = createPhysics(room.map, resolvePlayerStarts(room.map, room.mode));
   room.goalBounds = initRoundGoalBounds(room.physics, room.map);
@@ -253,6 +255,24 @@ io.on('connection', (socket) => {
       onRoomClosed: handleRoomClosed,
       onMatchEnded: handleMatchEnded,
     });
+  });
+
+  socket.on('add_bot', () => {
+    const room = manager.getRoomByPlayer(socket.id);
+    if (!room || room.state !== 'lobby') return;
+    const player = room.players.find((p) => p.id === socket.id);
+    if (player?.slot !== 0) return; // host only
+    if (manager.addBot(room) === 'full') return;
+    emitLobbyUpdate(io, room);
+  });
+
+  socket.on('remove_bot', ({ slot }) => {
+    const room = manager.getRoomByPlayer(socket.id);
+    if (!room || room.state !== 'lobby') return;
+    const player = room.players.find((p) => p.id === socket.id);
+    if (player?.slot !== 0) return; // host only
+    if (!manager.removeBot(room, slot)) return;
+    emitLobbyUpdate(io, room);
   });
 
   socket.on('swap_team', () => {

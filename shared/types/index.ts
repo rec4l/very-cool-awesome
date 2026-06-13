@@ -44,6 +44,10 @@ export type GuestPlayer = {
   faceId: string;
   // false while a mid-match disconnect is within its reconnect grace period (#11)
   connected: boolean;
+  // AI-controlled players: synthetic id (`bot-${slot}`), no socket
+  isBot?: boolean;
+  // difficulty knob for bots, ignored for human players
+  elo?: number;
 };
 
 export type PlayerStyle = { name: string; color: number; faceId: string };
@@ -118,6 +122,7 @@ export type LobbyPlayer = {
   ready: boolean;
   color: number;
   faceId: string;
+  isBot?: boolean;
 };
 
 export type ServerToClientEvents = {
@@ -154,4 +159,6 @@ export type ClientToServerEvents = {
   swap_team: () => void;
   input: (input: PlayerInput) => void;
   change_name: (data: { name: string }) => void;
+  add_bot: () => void;
+  remove_bot: (data: { slot: number }) => void;
 };

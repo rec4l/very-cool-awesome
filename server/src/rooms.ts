@@ -47,6 +47,29 @@ export type Pickup = {
   respawnTimer: number;
 };
 
+export type BotMode = 'CHASE_BALL' | 'DEFEND_GOAL' | 'RETURN_TO_POSITION';
+
+// Persistent per-bot state, indexed by slot like inputs/powerUps. Holds the
+// state machine's current mode/target between recomputes, plus one-shot
+// power-up decisions rolled at the same time as the target.
+export type BotState = {
+  mode: BotMode;
+  target: Vec2;
+  reactionTimer: number; // ticks remaining until the target is recomputed
+  wantsTeleport: boolean;
+  fireWreckingBall: boolean;
+};
+
+export function defaultBotState(): BotState {
+  return {
+    mode: 'CHASE_BALL',
+    target: { x: 0, y: 0 },
+    reactionTimer: 0,
+    wantsTeleport: false,
+    fireWreckingBall: false,
+  };
+}
+
 // All per-player state is indexed by slot (0-based).
 // Arrays are pre-allocated to mode.maxPlayers on room creation.
 export type Room = {
@@ -63,6 +86,7 @@ export type Room = {
   ready: boolean[];                // indexed by slot
   rematchVotes: boolean[];         // indexed by slot — who's voted to rematch in postgame
   powerUps: PlayerPowerUps[];      // indexed by slot
+  botState: BotState[];            // indexed by slot — only meaningful for bot players
   pickups: Pickup[];
   physics: ReturnType<typeof createPhysics>;
   loop: ReturnType<typeof setInterval> | null;
@@ -141,6 +165,7 @@ export class RoomManager {
       ready:    Array.from({ length: mode.maxPlayers }, () => false),
       rematchVotes: Array.from({ length: mode.maxPlayers }, () => false),
       powerUps: Array.from({ length: mode.maxPlayers }, () => defaultPowerUps()),
+      botState: Array.from({ length: mode.maxPlayers }, () => defaultBotState()),
       pickups:  defaultPickups(classicMap),
       physics,
       loop: null,
@@ -165,6 +190,29 @@ export class RoomManager {
     return room;
   }
 
+  // Fills the first empty slot with a bot. Bots auto-ready (no READY button shown for them).
+  addBot(room: Room, elo = 1000): Room | 'full' {
+    const taken = new Set(room.players.map((p) => p.slot));
+    let slot = 0;
+    while (taken.has(slot) && slot < room.mode.maxPlayers) slot++;
+    if (slot >= room.mode.maxPlayers) return 'full';
+    const team = slot < room.mode.teamSize ? 'A' : 'B';
+    room.players.push({
+      id: `bot-${slot}`, name: `Bot ${slot + 1}`, slot, team,
+      color: 0x9e9e9e, faceId: 'angry', connected: true, isBot: true, elo,
+    });
+    room.ready[slot] = true;
+    return room;
+  }
+
+  removeBot(room: Room, slot: number): boolean {
+    const idx = room.players.findIndex((p) => p.slot === slot && p.isBot);
+    if (idx === -1) return false;
+    room.players.splice(idx, 1);
+    room.ready[slot] = false;
+    return true;
+  }
+
   setMode(room: Room, mode: GameMode): boolean {
     if (room.players.length > mode.maxPlayers) return false;
     room.mode = mode;
@@ -175,6 +223,7 @@ export class RoomManager {
     room.ready = Array.from({ length: mode.maxPlayers }, () => false);
     room.rematchVotes = Array.from({ length: mode.maxPlayers }, () => false);
     room.powerUps = Array.from({ length: mode.maxPlayers }, (_, i) => room.powerUps[i] ?? defaultPowerUps());
+    room.botState = Array.from({ length: mode.maxPlayers }, (_, i) => room.botState[i] ?? defaultBotState());
     room.physics = createPhysics(room.map, resolvePlayerStarts(room.map, mode));
     room.reconnectTimers = Array.from({ length: mode.maxPlayers }, (_, i) => room.reconnectTimers[i] ?? null);
     return true;
